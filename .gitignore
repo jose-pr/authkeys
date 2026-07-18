@@ -1,0 +1,29 @@
+# Build/dist output and generated docs site
+dist/
+build/
+site/
+*.egg-info/
+
+# Agent/harness tooling (never commit these)
+AGENTS.md
+.agents/
+CLAUDE.md
+CLAUDE.local.md
+.claude/
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+.venv/
+
+# Project-specific
+/.pyenv
+/.env
+/_*
+/src/_*
