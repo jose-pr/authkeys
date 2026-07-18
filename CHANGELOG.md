@@ -4,6 +4,40 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.1] - 2026-07-18
+
+Hardening release from a code-review pass. No API breaks.
+
+### Security
+- LDAP source now escapes the username in the search filter
+  (`escape_filter_chars`), preventing LDAP filter injection when the username is
+  attacker-controlled (e.g. via the HTTP key server).
+- HTTP source percent-encodes the username before templating it into the request
+  URL, preventing path/query tampering of the upstream key service.
+- `authkeys serve` now fails closed: if `[serve] api_key` is present but resolves
+  empty (e.g. an unset `${env:...}`), it refuses to start instead of silently
+  disabling authentication. A truly absent `api_key` still runs unauthenticated
+  with a warning.
+
+### Fixed
+- HTTP source `verify` now interprets bool-like values (`true`/`false`/...) as a
+  boolean; other values remain a CA-bundle path. Previously `verify = false` was
+  passed to requests as the string `"false"` (a CA path) and did not disable
+  verification.
+- The key server (`ThreadingHTTPServer`) now resolves under a lock, so concurrent
+  requests no longer race on the shared cache backend or issue duplicate upstream
+  fetches for the same key.
+- A malformed cache `expire` value falls back to the default TTL instead of
+  disabling caching entirely (and no longer masks genuine backend errors).
+
+### Changed
+- `authkeys serve` now honors each user's `~/.ssh/authkeys.conf` user/group
+  delegation, matching `authkeys resolve` (both go through the new
+  `AuthKeys.resolve()`).
+- `authkeys <user>` default-command insertion is more robust: a leading flag
+  before a bare username (`authkeys -v alice`) is routed to the `resolve`
+  subparser instead of erroring.
+
 ## [0.1.0] - 2026-07-18
 
 Initial packaged release: a `src/` layout, a `duho`-based CLI, and a published
