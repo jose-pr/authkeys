@@ -6,11 +6,10 @@ server. ``resolve`` is also the default command when none is given.
 """
 
 import typing as _ty
-from pathlib import Path
 
 from duho import AUTO, Args, Cmd, LoggingArgs, main
 
-from . import AuthKeys, __version__, config, utils
+from . import AuthKeys, config, utils
 from .config import AuthkeysConfig
 
 
@@ -44,16 +43,7 @@ class Resolve(LoggingArgs, Cmd):
         auth = _build(cfg)
 
         username = self.username or utils.get_user().pw_name
-        try:
-            user = utils.get_user(username)
-            user_conf = AuthkeysConfig.from_config(
-                Path(user.pw_dir) / config.USER_CONF_PATH
-            )
-        except Exception:
-            user_conf = AuthkeysConfig.from_config()
-
-        auth.load_user_config(username, user_conf)
-        for key in auth.authorized_keys(username):
+        for key in auth.resolve(username):
             print(key)
         return 0
 
@@ -89,11 +79,24 @@ class Serve(LoggingArgs, Cmd):
         def opt(name, default):
             return serve_conf.get(name, default) if serve_conf else default
 
+        # Fail closed: if an api_key is configured but resolves empty (e.g. an
+        # unset ${env:...} or a typo), refuse to start rather than silently
+        # disabling authentication. A truly absent api_key still means
+        # "auth disabled" (KeyServer warns loudly).
+        api_key = opt("api_key", None)
+        if serve_conf is not None and "api_key" in serve_conf and not api_key:
+            raise SystemExit(
+                "authkeys serve: 'api_key' is configured in [serve] but resolved "
+                "to an empty value (unset ${env:...}?). Refusing to start with "
+                "authentication silently disabled. Set the key, or remove the "
+                "'api_key' line to run without authentication."
+            )
+
         server = KeyServer(
             auth,
             bind=self.bind or opt("bind", "127.0.0.1"),
             port=self.port or int(opt("port", 8090)),
-            api_key=opt("api_key", None),
+            api_key=api_key,
             path=opt("path", "/keys"),
         )
         serve(server)
@@ -117,16 +120,21 @@ def _with_default_command(argv: "_ty.Sequence[str]") -> "list[str]":
 
     Lets ``authkeys <user>`` behave like ``authkeys resolve <user>`` so the
     console script works as a drop-in OpenSSH ``AuthorizedKeysCommand``.
+
+    A known subcommand anywhere in argv (before ``--``) is left untouched;
+    otherwise ``resolve`` is prepended at the *front* so that subcommand flags
+    (``-v``, ``-c``, ...) reach the ``resolve`` subparser rather than the root
+    parser, which does not define them.
     """
     argv = list(argv)
-    for i, token in enumerate(argv):
+    for token in argv:
+        if token == "--":
+            break  # everything after is passthrough, not a command
         if token in ("-h", "--help", "--version"):
             return argv
-        if not token.startswith("-"):
-            if token not in _COMMANDS:
-                return argv[:i] + ["resolve"] + argv[i:]
+        if token in _COMMANDS:
             return argv
-    return argv + ["resolve"]
+    return ["resolve"] + argv
 
 
 def run(argv: "_ty.Sequence[str] | None" = None) -> "int | None":

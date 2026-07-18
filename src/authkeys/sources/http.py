@@ -5,10 +5,30 @@ client credentials are given as ``credentials = cert.pem,key.pem``. Requires the
 optional ``requests`` dependency (``pip install authkeys[http]``).
 """
 
+import urllib.parse
 from configparser import SectionProxy
 from typing import Iterable
 
 from .. import AuthkeysSource
+
+_FALSY = ("0", "false", "no", "off", "disabled")
+_TRUTHY = ("1", "true", "yes", "on", "enabled")
+
+
+def _parse_verify(value: str) -> "bool | str":
+    """Interpret the ``verify`` option.
+
+    A bool-like string toggles TLS verification; anything else is treated as a
+    CA-bundle path. Without this, ``verify = false`` would be passed to requests
+    as the *string* ``"false"``, which requests reads as a CA path (and fails),
+    silently NOT disabling verification.
+    """
+    lowered = value.strip().lower()
+    if lowered in _FALSY:
+        return False
+    if lowered in _TRUTHY:
+        return True
+    return value
 
 
 class HttpAuthorizedKeys(AuthkeysSource):
@@ -26,11 +46,14 @@ class HttpAuthorizedKeys(AuthkeysSource):
             self.options["cert"] = tuple(c.strip() for c in credentials.split(","))
         verify = conf.get("verify", None)
         if verify is not None:
-            self.options["verify"] = verify
+            self.options["verify"] = _parse_verify(verify)
 
     def authorized_keys(self, username: str) -> Iterable[str]:
+        # Percent-encode the username: it may be attacker-controlled (via
+        # `authkeys serve`) and must not alter the URL path/query.
+        quoted = urllib.parse.quote(username, safe="")
         resp = self.session.get(
-            self.address.format(username=username),
+            self.address.format(username=quoted),
             timeout=self.timeout,
             **self.options,
         )

@@ -89,7 +89,10 @@ class KeyHandler(BaseHTTPRequestHandler):
 
         keys: List[str] = []
         for username in usernames:
-            keys.extend(str(k) for k in self.server.authkeys.authorized_keys(username))
+            # resolve() loads any per-user ~/.ssh/authkeys.conf delegation (as
+            # the CLI does) and runs under the AuthKeys lock, so concurrent
+            # handler threads share the cache safely.
+            keys.extend(str(k) for k in self.server.authkeys.resolve(username))
         self._send("\n".join(keys) + ("\n" if keys else ""), HTTPStatus.OK)
 
 

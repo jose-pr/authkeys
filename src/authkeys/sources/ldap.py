@@ -42,6 +42,17 @@ class LdapAuthorizedKeys(AuthkeysSource):
             cert_filter = utils.import_module_object(cert_filter)
         self.cert_filter = cert_filter
 
+    def _search_filter(self, username: str) -> str:
+        """Build the LDAP search filter with the username properly escaped.
+
+        The username may be attacker-controlled (e.g. via ``authkeys serve``),
+        so it must be escaped to prevent LDAP filter injection such as
+        ``*)(uid=*`` matching unintended entries.
+        """
+        from ldap3.utils.conv import escape_filter_chars
+
+        return f"({self.username_attr}={escape_filter_chars(username)})"
+
     def authorized_keys(self, username: str) -> Iterable[str]:
         import ldap3
         from cryptography import x509
@@ -62,7 +73,7 @@ class LdapAuthorizedKeys(AuthkeysSource):
         try:
             found = conn.search(
                 self.basedn,
-                f"({self.username_attr}={username})",
+                self._search_filter(username),
                 attributes=[self.cert_attr],
             )
             if not found or not conn.response:

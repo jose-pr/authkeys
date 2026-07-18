@@ -6,6 +6,7 @@ caching and user/group aliasing. Designed to be driven either from the CLI as an
 ``AuthorizedKeysCommand`` or as a long-running key server (``authkeys serve``).
 """
 
+import threading
 from argparse import Namespace
 from configparser import SectionProxy
 from typing import Callable, Dict, Iterable, List, NamedTuple, Optional, Union
@@ -16,7 +17,7 @@ from . import groupmembers, usermaps, utils
 from .cache import AuthKeysCache, AuthKeysCacheBackend
 from .config import AuthkeysConfig
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 
 LOGGER = logging.getLogger("authkeys")
 
@@ -121,6 +122,10 @@ class AuthKeys:
         self.source_defaults = Source(
             cached=True, enabled=True, backend=None, sanitize=default_sanitize
         )
+        # Guards the per-(uid, source) cache miss -> compute -> store section so
+        # the threaded key server (ThreadingHTTPServer) doesn't race on the
+        # shared cache backend (esp. the file backend's read/write).
+        self._lock = threading.RLock()
 
     def load_config(self, config: AuthkeysConfig) -> None:
         for section in config.sections():
@@ -145,10 +150,20 @@ class AuthKeys:
         cache_backend = utils.import_module_object(
             cache_conf.get("backend") or "authkeys.cache.AuthKeysCacheMemBackend"
         )
+        # Parse the TTL independently: a malformed `expire` should fall back to
+        # the default, not disable caching entirely (and not mask a genuine
+        # backend construction error below).
+        try:
+            ttl = int(cache_conf.get("expire", 300))
+        except (TypeError, ValueError):
+            LOGGER.error(
+                f"Invalid cache 'expire' value {cache_conf.get('expire')!r}; "
+                f"falling back to default TTL 300"
+            )
+            ttl = 300
         try:
             self.cache = AuthKeysCache(
-                backend=cache_backend.from_config(cache_conf),
-                ttl=int(cache_conf.get("expire", 300)),
+                backend=cache_backend.from_config(cache_conf), ttl=ttl
             )
         except Exception as e:
             LOGGER.error(f"Could not load cache due to\n{e}")
@@ -157,6 +172,45 @@ class AuthKeys:
         self.use_expired_on_error = utils.parse_bool(
             cache_conf.get("expired_on_error")
         )
+
+    def user_config_path(self, username: str):
+        """Return a user's ``~/.ssh/authkeys.conf`` path, or None if unknown.
+
+        POSIX-only (uses ``pwd``); returns None when the user has no local
+        account, so the caller can fall back to resolving the literal username.
+        """
+        from pathlib import Path
+
+        from . import config as _config
+
+        try:
+            user = utils.get_user(username)
+        except Exception:
+            return None
+        return Path(user.pw_dir) / _config.USER_CONF_PATH
+
+    def resolve(
+        self, username: str, *, load_delegation: bool = True
+    ) -> "List[AuthorizedKey]":
+        """Load per-user delegation (if any) and resolve keys, atomically.
+
+        Used by both the CLI and the HTTP server so ``[authorized]``
+        user/group delegation behaves identically for each. Returns a
+        fully-materialized list (the shared-state mutation in
+        ``load_user_config`` and the resolution both run under ``self._lock``).
+        """
+        with self._lock:
+            if load_delegation:
+                path = self.user_config_path(username)
+                try:
+                    user_conf = AuthkeysConfig.from_config(path) if path else None
+                    if user_conf is not None:
+                        self.load_user_config(username, user_conf)
+                except Exception as e:
+                    LOGGER.error(
+                        f"Could not load delegation config for {username}: {e}"
+                    )
+            return list(self.authorized_keys(username))
 
     def load_user_config(self, username: str, parser: AuthkeysConfig) -> None:
         config = UserConfig()
@@ -182,53 +236,61 @@ class AuthKeys:
 
         self.users[username] = config
 
+    def _resolve_source_user(
+        self, src_name: str, src: "Source", usr: str, uid: str
+    ) -> "List[AuthorizedKey]":
+        """Resolve one source for one user, cached under ``self._lock``.
+
+        The lock makes the cache miss -> compute -> store sequence atomic so the
+        threaded key server does not run duplicate upstream fetches or race on
+        the file cache backend. Returns a fully-materialized list; the caller
+        yields outside the lock so no lock is held across ``yield``.
+        """
+        cache_key = (uid, src_name)
+        with self._lock:
+            cached = (
+                self.cache.get(cache_key) if self.cache and src.cached else None
+            )
+            if cached is not None:
+                LOGGER.info(f"Using cached source: {src_name} for {usr} -> {uid}")
+                return list(AuthorizedKey.parse_all(cached))
+            try:
+                LOGGER.info(f"Using source: {src_name} for {usr} -> {uid}")
+                keys: "List[AuthorizedKey]" = []
+                for raw in src.backend.authorized_keys(uid):
+                    for key in AuthorizedKey.parse_all(raw):
+                        if src.sanitize:
+                            key = src.sanitize(src_name, uid, key)
+                            if not key:
+                                continue
+                        keys.append(key)
+                if self.cache and src.cached:
+                    self.cache[cache_key] = "\n".join(str(k) for k in keys)
+                return keys
+            except Exception as e:
+                LOGGER.error(
+                    f"Error while loading keys for {usr} from {src_name}\n{e}"
+                )
+                if self.use_expired_on_error and self.cache:
+                    expired = self.cache.get(cache_key, include_expired=True)
+                    if expired:
+                        LOGGER.warning(
+                            f"Falling back to expired keys for {src_name}: "
+                            f"{usr} -> {uid}"
+                        )
+                        return list(AuthorizedKey.parse_all(expired))
+                return []
+
     def authorized_keys(self, username: str) -> "Iterable[AuthorizedKey]":
         usr_config = self.users.get(username) or UserConfig([username])
         yielded: "List[AuthorizedKey]" = []
-
-        def emit(candidate: "Iterable[AuthorizedKey]"):
-            for key in candidate:
-                if key not in yielded:
-                    yielded.append(key)
-                    yield key
 
         for src_name, src in self.sources.items():
             if not src.enabled or src.backend is None:
                 continue
             for usr in usr_config.authorized_users:
                 uid = self.usermap(usr, src_name, src)
-                cache_key = (uid, src_name)
-                cached = (
-                    self.cache.get(cache_key) if self.cache and src.cached else None
-                )
-                if cached is not None:
-                    LOGGER.info(
-                        f"Using cached source: {src_name} for {usr} -> {uid}"
-                    )
-                    yield from emit(AuthorizedKey.parse_all(cached))
-                    continue
-                try:
-                    LOGGER.info(f"Using source: {src_name} for {usr} -> {uid}")
-                    keys: "List[AuthorizedKey]" = []
-                    for raw in src.backend.authorized_keys(uid):
-                        for key in AuthorizedKey.parse_all(raw):
-                            if src.sanitize:
-                                key = src.sanitize(src_name, uid, key)
-                                if not key:
-                                    continue
-                            keys.append(key)
-                    yield from emit(keys)
-                    if self.cache and src.cached:
-                        self.cache[cache_key] = "\n".join(str(k) for k in keys)
-                except Exception as e:
-                    LOGGER.error(
-                        f"Error while loading keys for {username} from {src_name}\n{e}"
-                    )
-                    if self.use_expired_on_error and self.cache:
-                        expired = self.cache.get(cache_key, include_expired=True)
-                        if expired:
-                            LOGGER.warning(
-                                f"Falling back to expired keys for {src_name}: "
-                                f"{usr} -> {uid}"
-                            )
-                            yield from emit(AuthorizedKey.parse_all(expired))
+                for key in self._resolve_source_user(src_name, src, usr, uid):
+                    if key not in yielded:
+                        yielded.append(key)
+                        yield key
