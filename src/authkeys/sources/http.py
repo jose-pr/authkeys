@@ -57,8 +57,11 @@ class HttpAuthorizedKeys(AuthkeysSource):
             timeout=self.timeout,
             **self.options,
         )
-        if resp.status_code == 200:
-            for line in resp.content.decode().splitlines():
-                line = line.strip()
-                if line and not line.startswith("#"):
-                    yield line
+        # Raise on any non-success status so a transient 5xx/403 routes through
+        # the resolver's error path (and expired_on_error) instead of being
+        # silently cached as "this user has no keys".
+        resp.raise_for_status()
+        for line in resp.content.decode().splitlines():
+            line = line.strip()
+            if line and not line.startswith("#"):
+                yield line

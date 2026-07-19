@@ -43,8 +43,9 @@ class AuthkeysConfig(configparser.ConfigParser):
         value = self.get(section, option, **kwargs)
         if not isinstance(value, str):
             # A non-string fallback (e.g. a default list) was returned because
-            # the option is absent; hand it back untouched.
-            return value
+            # the option is absent; return a copy so a caller mutating the result
+            # can't corrupt the shared default object.
+            return list(value) if value is not None else value
         return list(filter(None, (x.strip() for x in value.splitlines())))
 
     @classmethod

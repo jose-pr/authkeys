@@ -43,16 +43,23 @@ class KeyServer(ThreadingHTTPServer):
         port: int = 8090,
         api_key: Optional[str] = None,
         path: str = "/keys",
+        max_usernames: int = 16,
     ) -> None:
         self.authkeys = authkeys
         self.api_key = api_key or None
         self.route = "/" + path.strip("/")
+        self.max_usernames = max_usernames
         super().__init__((bind, port), KeyHandler)
 
     def check_auth(self, provided: List[str]) -> bool:
         if not self.api_key:
             return True  # auth disabled
-        return any(hmac.compare_digest(p, self.api_key) for p in provided)
+        # Compare bytes: hmac.compare_digest raises TypeError on non-ASCII str,
+        # so a crafted ?apikey=<non-ascii> would otherwise 500 instead of 401.
+        expected = self.api_key.encode("utf-8")
+        return any(
+            hmac.compare_digest(p.encode("utf-8"), expected) for p in provided
+        )
 
 
 class KeyHandler(BaseHTTPRequestHandler):
@@ -85,6 +92,11 @@ class KeyHandler(BaseHTTPRequestHandler):
         usernames = query.get("username", [])
         if not usernames:
             self._send("Missing 'username' parameter", HTTPStatus.BAD_REQUEST)
+            return
+        if len(usernames) > self.server.max_usernames:
+            # Bound the work one request can force (matters most in the
+            # auth-disabled mode -- an unauthenticated amplification vector).
+            self._send("Too many 'username' parameters", HTTPStatus.BAD_REQUEST)
             return
 
         keys: List[str] = []

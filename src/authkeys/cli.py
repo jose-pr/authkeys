@@ -39,13 +39,22 @@ class Resolve(LoggingArgs, Cmd):
     ("--config", "-c")
 
     def __call__(self) -> "int | None":
-        cfg = self.config_paths or _default_config_paths()
-        auth = _build(cfg)
-
-        username = self.username or utils.get_user().pw_name
-        for key in auth.resolve(username):
-            print(key)
-        return 0
+        # An AuthorizedKeysCommand must never dump a traceback into auth.log: on
+        # any config/internal error, log one line to stderr and exit non-zero
+        # (sshd reads a non-zero exit / empty stdout as "no keys" = deny).
+        # Exit codes: 0 = success (including "no keys"); 3 = config/internal error.
+        try:
+            cfg = self.config_paths or _default_config_paths()
+            auth = _build(cfg)
+            username = self.username or utils.get_user().pw_name
+            for key in auth.resolve(username):
+                print(key)
+            return 0
+        except SystemExit:
+            raise
+        except BaseException as e:  # noqa: BLE001 - deliberate catch-all boundary
+            self._logger_.error(f"authkeys resolve failed: {e}")
+            return 3
 
 
 class Serve(LoggingArgs, Cmd):
@@ -98,9 +107,92 @@ class Serve(LoggingArgs, Cmd):
             port=self.port or int(opt("port", 8090)),
             api_key=api_key,
             path=opt("path", "/keys"),
+            max_usernames=int(opt("max_usernames", 16)),
         )
         serve(server)
         return 0
+
+
+class Cache(LoggingArgs, Cmd):
+    """Inspect, purge, or warm the resolved-keys cache."""
+
+    _parsername_ = "cache"
+    _logger_name_ = "authkeys"
+
+    action: str = "show"
+    "One of: show, purge, warm"
+    ("action",)
+
+    config_paths: str = ""
+    "Colon-separated config paths (defaults to system paths)"
+    ("--config", "-c")
+
+    user: _ty.Optional[str] = None
+    "Limit purge to this user (uid), or warm this user"
+    ("--user", "-u")
+
+    source: _ty.Optional[str] = None
+    "Limit purge to this source"
+    ("--source", "-s")
+
+    expired: bool = False
+    "purge: only remove expired entries"
+    ("--expired",)
+
+    all: bool = False
+    "purge: remove every entry"
+    ("--all",)
+
+    users: _ty.List[str] = []
+    "warm: users to pre-resolve into the cache"
+    ("users",)
+
+    def __call__(self) -> "int | None":
+        cfg = self.config_paths or _default_config_paths()
+        auth = _build(cfg)
+        if auth.cache is None:
+            self._logger_.error("No cache configured")
+            return 3
+        backend = auth.cache.backend
+        try:
+            if self.action == "show":
+                for uid, src in sorted(backend.keys()):
+                    entry = backend[(uid, src)]
+                    age = int(__import__("time").time() - entry[1]) if entry else "?"
+                    print(f"{src}\t{uid}\tage={age}s")
+                return 0
+            if self.action == "purge":
+                removed = 0
+                if self.expired:
+                    removed = backend.sweep(max_age=auth.cache.ttl)
+                elif self.all:
+                    for k in list(backend.keys()):
+                        del backend[k]
+                        removed += 1
+                else:
+                    for uid, src in list(backend.keys()):
+                        if (self.user and uid != self.user) or (
+                            self.source and src != self.source
+                        ):
+                            continue
+                        del backend[(uid, src)]
+                        removed += 1
+                self._logger_.info(f"Purged {removed} cache entr(y/ies)")
+                return 0
+            if self.action == "warm":
+                targets = self.users or ([self.user] if self.user else [])
+                for username in targets:
+                    keys = auth.resolve(username)
+                    self._logger_.info(f"Warmed {username}: {len(keys)} key(s)")
+                return 0
+        except NotImplementedError:
+            self._logger_.error(
+                "The configured cache backend does not support this action "
+                "(in-memory caches are per-process)."
+            )
+            return 3
+        self._logger_.error(f"Unknown cache action: {self.action}")
+        return 2
 
 
 class Authkeys(Args):
@@ -109,10 +201,10 @@ class Authkeys(Args):
     _parsername_ = "authkeys"
     _version_ = AUTO
     _distribution_ = "authkeys"
-    _subcommands_ = [Resolve, Serve]
+    _subcommands_ = [Resolve, Serve, Cache]
 
 
-_COMMANDS = {"resolve", "keys", "serve"}
+_COMMANDS = {"resolve", "keys", "serve", "cache"}
 
 
 def _with_default_command(argv: "_ty.Sequence[str]") -> "list[str]":

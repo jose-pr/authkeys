@@ -17,7 +17,12 @@ from . import groupmembers, usermaps, utils
 from .cache import AuthKeysCache, AuthKeysCacheBackend
 from .config import AuthkeysConfig
 
-__version__ = "0.1.1"
+try:
+    from importlib.metadata import version as _pkg_version
+
+    __version__ = _pkg_version("authkeys")
+except Exception:  # not installed (bare source checkout)
+    __version__ = "0+unknown"
 
 LOGGER = logging.getLogger("authkeys")
 
@@ -92,6 +97,7 @@ class Source(Namespace):
     enabled: bool
     backend: "Optional[AuthkeysSource]"
     sanitize: "Optional[Sanitizer]"
+    expire: "Optional[int]"  # per-source TTL override; None => use [cache] expire
 
     @classmethod
     def from_config(
@@ -107,7 +113,19 @@ class Source(Namespace):
             sanitize = utils.import_module_object(sanitize)
         elif sanitize is None:
             sanitize = defaults.sanitize
-        return cls(cached=cached, enabled=enabled, backend=backend, sanitize=sanitize)
+        expire = config.get("expire")
+        try:
+            expire = int(expire) if expire is not None else None
+        except (TypeError, ValueError):
+            LOGGER.error(f"Invalid source 'expire' {expire!r}; using [cache] expire")
+            expire = None
+        return cls(
+            cached=cached,
+            enabled=enabled,
+            backend=backend,
+            sanitize=sanitize,
+            expire=expire,
+        )
 
 
 class AuthKeys:
@@ -120,7 +138,11 @@ class AuthKeys:
         self.use_expired_on_error = False
         self.groupmembers = groupmembers.system_groupmembers
         self.source_defaults = Source(
-            cached=True, enabled=True, backend=None, sanitize=default_sanitize
+            cached=True,
+            enabled=True,
+            backend=None,
+            sanitize=default_sanitize,
+            expire=None,
         )
         # Guards the per-(uid, source) cache miss -> compute -> store section so
         # the threaded key server (ThreadingHTTPServer) doesn't race on the
@@ -161,9 +183,17 @@ class AuthKeys:
                 f"falling back to default TTL 300"
             )
             ttl = 300
+        neg_raw = cache_conf.get("negative_expire")
+        try:
+            negative_ttl = int(neg_raw) if neg_raw is not None else None
+        except (TypeError, ValueError):
+            LOGGER.error(f"Invalid 'negative_expire' {neg_raw!r}; using expire")
+            negative_ttl = None
         try:
             self.cache = AuthKeysCache(
-                backend=cache_backend.from_config(cache_conf), ttl=ttl
+                backend=cache_backend.from_config(cache_conf),
+                ttl=ttl,
+                negative_ttl=negative_ttl,
             )
         except Exception as e:
             LOGGER.error(f"Could not load cache due to\n{e}")
@@ -192,25 +222,27 @@ class AuthKeys:
     def resolve(
         self, username: str, *, load_delegation: bool = True
     ) -> "List[AuthorizedKey]":
-        """Load per-user delegation (if any) and resolve keys, atomically.
+        """Load per-user delegation (if any) and resolve keys.
 
         Used by both the CLI and the HTTP server so ``[authorized]``
-        user/group delegation behaves identically for each. Returns a
-        fully-materialized list (the shared-state mutation in
-        ``load_user_config`` and the resolution both run under ``self._lock``).
+        user/group delegation behaves identically for each. Only the shared
+        ``self.users`` mutation in ``load_user_config`` is done under the lock;
+        the resolution (which may fetch from a slow upstream) runs OUTSIDE it so
+        one hung source can't stall concurrent requests. Returns a
+        fully-materialized list.
         """
-        with self._lock:
-            if load_delegation:
-                path = self.user_config_path(username)
-                try:
-                    user_conf = AuthkeysConfig.from_config(path) if path else None
-                    if user_conf is not None:
+        if load_delegation:
+            path = self.user_config_path(username)
+            try:
+                user_conf = AuthkeysConfig.from_config(path) if path else None
+                if user_conf is not None:
+                    with self._lock:
                         self.load_user_config(username, user_conf)
-                except Exception as e:
-                    LOGGER.error(
-                        f"Could not load delegation config for {username}: {e}"
-                    )
-            return list(self.authorized_keys(username))
+            except Exception as e:
+                LOGGER.error(
+                    f"Could not load delegation config for {username}: {e}"
+                )
+        return list(self.authorized_keys(username))
 
     def load_user_config(self, username: str, parser: AuthkeysConfig) -> None:
         config = UserConfig()
@@ -236,54 +268,83 @@ class AuthKeys:
 
         self.users[username] = config
 
+    def _parse_source_lines(
+        self, src_name: str, uid: str, raw_lines: "Iterable[str]", sanitize
+    ) -> "List[AuthorizedKey]":
+        """Parse raw source lines into keys, skipping (not aborting on) bad ones.
+
+        A single malformed line must not discard the whole source's keys, so each
+        line is parsed defensively -- a ``ValueError`` on one line is logged and
+        skipped and parsing continues.
+        """
+        keys: "List[AuthorizedKey]" = []
+        for raw in raw_lines:
+            for line in (raw.splitlines() if isinstance(raw, str) else [raw]):
+                try:
+                    parsed = list(AuthorizedKey.parse_all(line))
+                except ValueError as e:
+                    LOGGER.warning(
+                        f"Skipping malformed key line from {src_name} for {uid}: {e}"
+                    )
+                    continue
+                for key in parsed:
+                    if sanitize:
+                        key = sanitize(src_name, uid, key)
+                        if not key:
+                            continue
+                    keys.append(key)
+        return keys
+
     def _resolve_source_user(
         self, src_name: str, src: "Source", usr: str, uid: str
     ) -> "List[AuthorizedKey]":
-        """Resolve one source for one user, cached under ``self._lock``.
+        """Resolve one source for one user, with the cache guarded by ``self._lock``.
 
-        The lock makes the cache miss -> compute -> store sequence atomic so the
-        threaded key server does not run duplicate upstream fetches or race on
-        the file cache backend. Returns a fully-materialized list; the caller
-        yields outside the lock so no lock is held across ``yield``.
+        The lock guards only the cache read and write -- NOT the upstream fetch --
+        so one slow/hung source cannot stall other users' logins (esp. concurrent
+        ``serve`` requests). Two threads may fetch a cold key concurrently; that is
+        correctness-safe (last write wins). Returns a fully-materialized list; the
+        caller yields outside any lock.
         """
         cache_key = (uid, src_name)
-        with self._lock:
-            cached = (
-                self.cache.get(cache_key) if self.cache and src.cached else None
-            )
+        src_ttl = getattr(src, "expire", None)
+        if self.cache and src.cached:
+            with self._lock:
+                cached = self.cache.get(cache_key, ttl=src_ttl)
             if cached is not None:
                 LOGGER.info(f"Using cached source: {src_name} for {usr} -> {uid}")
                 return list(AuthorizedKey.parse_all(cached))
-            try:
-                LOGGER.info(f"Using source: {src_name} for {usr} -> {uid}")
-                keys: "List[AuthorizedKey]" = []
-                for raw in src.backend.authorized_keys(uid):
-                    for key in AuthorizedKey.parse_all(raw):
-                        if src.sanitize:
-                            key = src.sanitize(src_name, uid, key)
-                            if not key:
-                                continue
-                        keys.append(key)
-                if self.cache and src.cached:
+
+        try:
+            LOGGER.info(f"Using source: {src_name} for {usr} -> {uid}")
+            keys = self._parse_source_lines(
+                src_name, uid, src.backend.authorized_keys(uid), src.sanitize
+            )
+            if self.cache and src.cached:
+                with self._lock:
                     self.cache[cache_key] = "\n".join(str(k) for k in keys)
-                return keys
-            except Exception as e:
-                LOGGER.error(
-                    f"Error while loading keys for {usr} from {src_name}\n{e}"
-                )
-                if self.use_expired_on_error and self.cache:
+            return keys
+        except Exception as e:
+            LOGGER.error(
+                f"Error while loading keys for {usr} from {src_name}\n{e}"
+            )
+            if self.use_expired_on_error and self.cache:
+                with self._lock:
                     expired = self.cache.get(cache_key, include_expired=True)
-                    if expired:
-                        LOGGER.warning(
-                            f"Falling back to expired keys for {src_name}: "
-                            f"{usr} -> {uid}"
-                        )
-                        return list(AuthorizedKey.parse_all(expired))
-                return []
+                if expired:
+                    LOGGER.warning(
+                        f"Falling back to expired keys for {src_name}: "
+                        f"{usr} -> {uid}"
+                    )
+                    return list(AuthorizedKey.parse_all(expired))
+            return []
 
     def authorized_keys(self, username: str) -> "Iterable[AuthorizedKey]":
         usr_config = self.users.get(username) or UserConfig([username])
-        yielded: "List[AuthorizedKey]" = []
+        # Dedup on (type, key) -- NOT the whole tuple -- so the same public key
+        # coming from two sources (with different per-source comments) is emitted
+        # once, keeping the first comment seen.
+        seen: "set" = set()
 
         for src_name, src in self.sources.items():
             if not src.enabled or src.backend is None:
@@ -291,6 +352,7 @@ class AuthKeys:
             for usr in usr_config.authorized_users:
                 uid = self.usermap(usr, src_name, src)
                 for key in self._resolve_source_user(src_name, src, usr, uid):
-                    if key not in yielded:
-                        yielded.append(key)
+                    identity = (key.type, key.key)
+                    if identity not in seen:
+                        seen.add(identity)
                         yield key
