@@ -26,8 +26,10 @@ api_key = ${env:AUTHKEYS_APIKEY}
   example an unset environment variable), `authkeys serve` refuses to start rather
   than silently running unauthenticated. Remove the line entirely to intentionally
   run without authentication — and then bind only to a trusted interface.
-- The server resolves under a lock, so concurrent requests share the cache safely
-  and never issue duplicate upstream fetches for the same key.
+- The server resolves concurrently; the cache read/write is locked but the
+  upstream fetch is not, so one slow/hung source can't stall other requests.
+- `max_usernames` (default 16) caps how many `?username=` params a single request
+  may carry, bounding the work an unauthenticated request can force.
 
 ## Delegation
 

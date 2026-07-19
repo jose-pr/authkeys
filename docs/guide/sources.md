@@ -45,8 +45,7 @@ server = ldaps://ldap.example.com:636
 basedn = o=Example,c=US
 username_attr = uid
 cert_attr = userCertificate
-tls_cert = /etc/pki/tls/certs/server.crt
-tls_key = /etc/pki/tls/private/server.key
+tls_verify = system
 # cert_filter = authkeys.sources.ldap.only_auth_keys
 ```
 
@@ -55,3 +54,17 @@ OpenSSH format. The username is escaped before it goes into the LDAP filter, so 
 crafted username cannot inject additional filter clauses. An optional
 `cert_filter` callable `(username, cert) -> bool | str` can drop a certificate or
 supply a custom comment.
+
+!!! warning "Server-certificate verification"
+    The LDAPS channel decides who is allowed to log in, so authkeys **verifies the
+    server certificate by default**. `tls_verify` controls it:
+
+    | `tls_verify` | Behavior |
+    | --- | --- |
+    | unset / `system` | Verify against the OS trust store (default) |
+    | a file path | Verify against that CA bundle |
+    | a directory path | Verify against that CA directory |
+    | `none` | **Do not verify** — insecure, testing only (logs a warning) |
+
+    `tls_cert`/`tls_key` are the *client* mutual-TLS credentials, not server
+    verification. `timeout` (seconds) bounds a hung server.

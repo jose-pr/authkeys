@@ -4,6 +4,52 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - 2026-07-19
+
+A security and robustness release from a second review pass. **One breaking
+change** in the LDAP source (see below).
+
+### Security
+- **LDAP now verifies the server certificate by default** (breaking). Previously
+  the LDAPS connection trusted any peer certificate. A new `tls_verify` option
+  controls it: unset/`system` verifies against the OS trust store (default), a
+  path verifies against that CA file/directory, and `none` disables verification
+  (insecure; logs a warning). **Deployments that relied on no verification must
+  set `tls_verify = none`.** `tls_cert`/`tls_key` are now documented as the client
+  mutual-TLS credentials, not server verification.
+- The HTTP key server no longer 500s (with a traceback) on a non-ASCII `apikey`;
+  it returns a clean 401.
+- `authkeys serve` caps the number of `?username=` parameters per request
+  (`max_usernames`, default 16), bounding the work an unauthenticated request can
+  force.
+
+### Fixed
+- A single malformed line in a source (e.g. a corrupt `authorized_keys`) is now
+  skipped and logged instead of discarding **all** of that user's keys — which,
+  with `expired_on_error`, could previously serve stale/revoked keys.
+- The HTTP source now raises on a non-2xx status, so a transient 5xx/403 routes
+  through `expired_on_error` (stale fallback) instead of being cached as "this
+  user has no keys". Errored fetches are never cached as empty.
+- The resolve path never emits a traceback: on a config/internal error it logs one
+  line to stderr and exits non-zero (exit 3), keeping `auth.log` clean.
+- Bounded LDAP connection/receive timeouts, and the resolver no longer holds its
+  lock across the upstream fetch, so one slow/hung source can't stall other
+  logins (or, in `serve`, other concurrent requests).
+- Emitted keys are deduplicated by `(type, key)`, so the same public key coming
+  from two sources is no longer emitted twice with different comments.
+
+### Added
+- **Negative caching** with its own `negative_expire` TTL for keyless principals.
+- **Per-source `expire`** overriding `[cache] expire` (`0` = don't cache a source).
+- **Atomic file-cache writes** (temp file + rename) with `0600`/`0700` perms.
+- **`authkeys cache`** subcommand: `show`, `purge` (`--user`/`--source`/
+  `--expired`/`--all`), and `warm <users...>`; plus optional `max_age`/
+  `max_entries` eviction bounds for the file backend.
+
+### Changed
+- `authkeys.__version__` is now read from the installed distribution metadata
+  (single source of truth with `pyproject.toml`).
+
 ## [0.1.1] - 2026-07-18
 
 Hardening release from a code-review pass. No API breaks.
