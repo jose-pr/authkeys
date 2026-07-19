@@ -66,6 +66,60 @@ def test_parse_all_skips_blank_and_comment_lines():
     assert [k.key for k in keys] == ["AAAAB3Nza", "AAAAC3Nza"]
 
 
+# --- Options-prefixed lines (D1) -------------------------------------------
+
+
+def test_parse_options_prefix_round_trips_byte_for_byte():
+    line = 'command="x",no-pty ssh-rsa AAAA bob'
+    k = AuthorizedKey.parse(line)
+    assert (k.type, k.key, k.comment) == ("ssh-rsa", "AAAA", "bob")
+    assert k.options == 'command="x",no-pty'
+    assert str(k) == line
+
+
+def test_parse_bare_key_has_no_options():
+    k = AuthorizedKey.parse(RSA)
+    assert k.options == ""
+    assert str(k) == RSA
+
+
+def test_parse_options_without_equals_sign_still_detected():
+    # A token that isn't a recognized key type is an options prefix even
+    # without a literal "=" (e.g. a single bare option keyword).
+    line = "no-pty ssh-rsa AAAA bob"
+    k = AuthorizedKey.parse(line)
+    assert k.options == "no-pty"
+    assert (k.type, k.key) == ("ssh-rsa", "AAAA")
+
+
+def test_parse_still_rejects_single_token():
+    with pytest.raises(ValueError):
+        AuthorizedKey.parse("ssh-rsa")
+
+
+def test_parse_rejects_options_only_line():
+    with pytest.raises(ValueError):
+        AuthorizedKey.parse('command="x",no-pty')
+
+
+def test_dedup_treats_option_bearing_and_bare_key_as_distinct():
+    StaticSource.registry.clear()
+    auth = AuthKeys()
+    auth.load_config(_config())
+    src = StaticSource.registry["test"]
+    src.keys = {"alice": [RSA, f'command="x",no-pty {RSA}']}
+    keys = list(auth.authorized_keys("alice"))
+    assert len(keys) == 2
+    assert {k.options for k in keys} == {"", 'command="x",no-pty'}
+
+
+def test_default_sanitize_does_not_touch_options():
+    k = AuthorizedKey("ssh-rsa", "AAAA", "", 'command="x",no-pty')
+    sanitized = default_sanitize("src", "alice", k)
+    assert sanitized.options == 'command="x",no-pty'
+    assert sanitized.comment == "alice(src=src)"
+
+
 # --- Cache ----------------------------------------------------------------
 
 
@@ -174,3 +228,38 @@ def test_source_error_falls_back_to_expired_cache():
     src.authorized_keys = boom
     keys = list(auth.authorized_keys("alice"))
     assert [k.key for k in keys] == ["AAAAB3Nza"]
+
+
+# --- Source dataclass (D4) --------------------------------------------------
+
+
+def test_source_is_a_dataclass_with_expected_fields():
+    import dataclasses
+
+    from authkeys import Source
+
+    assert dataclasses.is_dataclass(Source)
+    assert {f.name for f in dataclasses.fields(Source)} == {
+        "cached",
+        "enabled",
+        "backend",
+        "sanitize",
+        "expire",
+    }
+
+
+def test_source_from_config_builds_expected_fields():
+    from authkeys import Source
+
+    defaults = Source(
+        cached=True, enabled=True, backend=None, sanitize=default_sanitize, expire=None
+    )
+    conf = AuthkeysConfig.from_config(
+        {"source:test": {"backend": f"{__name__}.StaticSource", "expire": "42"}}
+    )
+    src = Source.from_config(conf["source:test"], {}, defaults)
+    assert src.cached is True
+    assert src.enabled is True
+    assert src.expire == 42
+    assert src.sanitize is default_sanitize
+    assert isinstance(src.backend, StaticSource)

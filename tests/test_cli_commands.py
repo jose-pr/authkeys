@@ -1,5 +1,6 @@
 """CLI-level behavior: no-traceback resolve, exit codes, cache subcommand."""
 
+import json
 import sys
 import types
 
@@ -69,3 +70,57 @@ def test_cache_warm(tmp_path, monkeypatch):
     assert run(["cache", "warm", "alice", "--config", str(conf)]) == 0
     # The warmed entry is now on disk.
     assert (cachedir / "files" / "alice").exists()
+
+
+def _file_source_config(tmp_path, lines):
+    home = tmp_path / "home"
+    (home / ".ssh").mkdir(parents=True)
+    (home / ".ssh" / "authorized_keys").write_text("\n".join(lines) + "\n")
+    conf = tmp_path / "authkeys.conf"
+    conf.write_text("[source:files]\nbackend = authkeys.sources.authorizedkeys\n")
+    fake_pwd = types.ModuleType("pwd")
+    fake_pwd.getpwnam = lambda n: types.SimpleNamespace(pw_name=n, pw_dir=str(home))
+    fake_pwd.getpwuid = lambda u: types.SimpleNamespace(pw_name="alice", pw_dir=str(home))
+    return conf, fake_pwd
+
+
+def test_resolve_format_json_matches_resolved_keys(tmp_path, monkeypatch, capsys):
+    conf, fake_pwd = _file_source_config(
+        tmp_path, [RSA, 'command="x",no-pty ssh-ed25519 AAAAC3Nza bob']
+    )
+    monkeypatch.setitem(sys.modules, "pwd", fake_pwd)
+
+    rc = run(["resolve", "alice", "--config", str(conf), "--format", "json"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    parsed = json.loads(out)
+    assert parsed == [
+        {"type": "ssh-rsa", "key": "AAAAB3Nza", "comment": "a", "options": ""},
+        {
+            "type": "ssh-ed25519",
+            "key": "AAAAC3Nza",
+            "comment": "bob",
+            "options": 'command="x",no-pty',
+        },
+    ]
+
+
+def test_resolve_format_default_unchanged(tmp_path, monkeypatch, capsys):
+    conf, fake_pwd = _file_source_config(tmp_path, [RSA])
+    monkeypatch.setitem(sys.modules, "pwd", fake_pwd)
+
+    rc = run(["resolve", "alice", "--config", str(conf)])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert out.splitlines() == [RSA]
+
+
+def test_check_format_json(tmp_path, monkeypatch, capsys):
+    conf, fake_pwd = _file_source_config(tmp_path, [RSA])
+    monkeypatch.setitem(sys.modules, "pwd", fake_pwd)
+
+    rc = run(["check", "alice", "--config", str(conf), "--format", "json"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    parsed = json.loads(out)
+    assert parsed == [{"type": "ssh-rsa", "key": "AAAAB3Nza", "comment": "a", "options": ""}]
