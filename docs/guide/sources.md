@@ -1,0 +1,57 @@
+# Key sources
+
+A source is declared as a `[source:<name>]` section. `enabled` and `cached` both
+default to `true`. An optional `sanitize` callable can rewrite or drop each key.
+
+| Alias (`backend =`)                | Reads keys from                        | Extra dep |
+| ---------------------------------- | -------------------------------------- | --------- |
+| `authkeys.sources.authorizedkeys`  | `~/.ssh/authorized_keys*` files        | —         |
+| `authkeys.sources.http`            | an HTTP URL (`{username}` templated)   | `requests` |
+| `authkeys.sources.ldap`            | X.509 certs in an LDAP directory       | `ldap3`, `cryptography` |
+
+## File
+
+```ini
+[source:files]
+backend = authkeys.sources.authorizedkeys
+paths =
+    authorized_keys
+    authorized_keys2
+```
+
+Reads the listed files under each user's `~/.ssh/`, skipping blank and comment
+lines.
+
+## HTTP
+
+```ini
+[source:http]
+backend = authkeys.sources.http
+address = https://keys.example.com/{username}
+# credentials = client.crt,client.key   ; optional mutual TLS
+# verify = /etc/pki/tls/certs/ca.crt     ; true/false, or a CA-bundle path
+```
+
+`{username}` is percent-encoded before it is substituted, so a username can never
+alter the request path or query. `verify` accepts a bool-like value
+(`true`/`false`) to toggle TLS verification, or a path to a CA bundle.
+
+## LDAP
+
+```ini
+[source:ldap]
+backend = authkeys.sources.ldap
+server = ldaps://ldap.example.com:636
+basedn = o=Example,c=US
+username_attr = uid
+cert_attr = userCertificate
+tls_cert = /etc/pki/tls/certs/server.crt
+tls_key = /etc/pki/tls/private/server.key
+# cert_filter = authkeys.sources.ldap.only_auth_keys
+```
+
+Each matching entry's certificate is parsed and its public key serialized to
+OpenSSH format. The username is escaped before it goes into the LDAP filter, so a
+crafted username cannot inject additional filter clauses. An optional
+`cert_filter` callable `(username, cert) -> bool | str` can drop a certificate or
+supply a custom comment.

@@ -1,5 +1,10 @@
 # authkeys
 
+[![PyPI version](https://img.shields.io/pypi/v/authkeys.svg)](https://pypi.org/project/authkeys/)
+[![Python versions](https://img.shields.io/pypi/pyversions/authkeys.svg)](https://pypi.org/project/authkeys/)
+[![Documentation](https://img.shields.io/badge/docs-jose--pr.github.io%2Fauthkeys-blue.svg)](https://jose-pr.github.io/authkeys/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/jose-pr/authkeys/blob/main/LICENSE)
+
 A pluggable OpenSSH [`AuthorizedKeysCommand`](https://man.openbsd.org/sshd_config#AuthorizedKeysCommand)
 provider. It resolves a user's authorized SSH keys from one or more configured
 **sources** — local key files, an HTTP endpoint, or LDAP-stored X.509
