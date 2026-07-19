@@ -65,6 +65,20 @@ def test_wrong_apikey_is_401(server):
     assert exc.value.code == 401
 
 
+def test_non_ascii_apikey_is_401_not_500(server):
+    # hmac.compare_digest raises TypeError on non-ASCII str; must yield 401.
+    with pytest.raises(urllib.error.HTTPError) as exc:
+        _get(f"{server}/keys?username=alice&apikey=p%C3%A9")  # 'pé'
+    assert exc.value.code == 401
+
+
+def test_too_many_usernames_is_400(server):
+    qs = "&".join(["username=alice"] * 100)
+    with pytest.raises(urllib.error.HTTPError) as exc:
+        _get(f"{server}/keys?{qs}&apikey=secret")
+    assert exc.value.code == 400
+
+
 def test_missing_username_is_400(server):
     with pytest.raises(urllib.error.HTTPError) as exc:
         _get(f"{server}/keys?apikey=secret")

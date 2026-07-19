@@ -38,6 +38,10 @@ class _FakeResp:
     status_code = 200
     content = b""
 
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise RuntimeError(f"HTTP {self.status_code}")
+
 
 class _FakeSession:
     def __init__(self):
@@ -100,7 +104,7 @@ def test_serve_fails_closed_on_empty_api_key(tmp_path, monkeypatch):
     assert "api_key" in str(exc.value)
 
 
-# --- F5: thread-safe cache ------------------------------------------------
+# --- F5: thread-safe cache (contract: correct + non-blocking, NOT fetch-dedup) -
 
 
 class SlowCountingSource(AuthkeysSource):
@@ -116,7 +120,11 @@ class SlowCountingSource(AuthkeysSource):
         return [RSA]
 
 
-def test_concurrent_resolution_hits_backend_once():
+def test_concurrent_resolution_is_correct_and_lock_not_held_across_fetch():
+    # The lock guards only the cache read/write, NOT the upstream fetch, so one
+    # slow source can't stall other users' logins. Concurrent cold requests are
+    # correctness-safe (all return the right keys); fetch dedup is deliberately
+    # NOT guaranteed (that was traded away for availability).
     SlowCountingSource.instances.clear()
     conf = AuthkeysConfig.from_config(
         {
@@ -138,9 +146,11 @@ def test_concurrent_resolution_hits_backend_once():
     for t in threads:
         t.join()
 
-    src = SlowCountingSource.instances[0]
-    assert src.calls == 1  # serialized + cached, no duplicate fetches
-    assert all(len(r) == 1 for r in results)
+    assert all(len(r) == 1 for r in results)  # every caller gets the right key
+    # A later resolve is served from cache (one of the concurrent writes landed).
+    before = SlowCountingSource.instances[0].calls
+    list(auth.resolve("alice", load_delegation=False))
+    assert SlowCountingSource.instances[0].calls == before  # cache hit, no new fetch
 
 
 # --- F6: serve honors per-user delegation ---------------------------------
