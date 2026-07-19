@@ -5,11 +5,12 @@
 server. ``resolve`` is also the default command when none is given.
 """
 
+import json
 import typing as _ty
 
 from duho import AUTO, Arg, Args, Choice, Cmd, LoggingArgs, main, print_completion
 
-from . import AuthKeys, config, utils
+from . import AuthKeys, AuthorizedKey, config, utils
 from .config import AuthkeysConfig
 
 
@@ -21,6 +22,33 @@ def _build(cfg: str) -> AuthKeys:
     auth = AuthKeys()
     auth.load_config(AuthkeysConfig.from_config(cfg))
     return auth
+
+
+def _print_keys(keys: "_ty.List[AuthorizedKey]", format: str) -> None:
+    """Print resolved keys in the requested output format.
+
+    ``authorized_keys`` (default): unchanged, one ``str(key)`` per line -- the
+    sshd wire format. ``json``: a single JSON array of objects, one per key,
+    for scripting/tooling consumers. Shared by ``resolve`` and ``check`` so
+    both commands stay in sync.
+    """
+    if format == "json":
+        print(
+            json.dumps(
+                [
+                    {
+                        "type": key.type,
+                        "key": key.key,
+                        "comment": key.comment,
+                        "options": key.options,
+                    }
+                    for key in keys
+                ]
+            )
+        )
+        return
+    for key in keys:
+        print(key)
 
 
 class Resolve(LoggingArgs, Cmd):
@@ -38,6 +66,10 @@ class Resolve(LoggingArgs, Cmd):
     "Colon-separated config paths (defaults to system paths)"
     ("--config", "-c")
 
+    format: "Arg[str, Choice('authorized_keys', 'json')]" = "authorized_keys"
+    "Output format: authorized_keys (default, sshd wire format) or json"
+    ("--format",)
+
     def __call__(self) -> "int | None":
         # An AuthorizedKeysCommand must never dump a traceback into auth.log: on
         # any config/internal error, log one line to stderr and exit non-zero
@@ -47,8 +79,7 @@ class Resolve(LoggingArgs, Cmd):
             cfg = self.config_paths or _default_config_paths()
             auth = _build(cfg)
             username = self.username or utils.get_user().pw_name
-            for key in auth.resolve(username):
-                print(key)
+            _print_keys(list(auth.resolve(username)), self.format)
             return 0
         except SystemExit:
             raise
@@ -71,6 +102,10 @@ class Check(LoggingArgs, Cmd):
     "Colon-separated config paths (defaults to system paths)"
     ("--config", "-c")
 
+    format: "Arg[str, Choice('authorized_keys', 'json')]" = "authorized_keys"
+    "Output format: authorized_keys (default, sshd wire format) or json"
+    ("--format",)
+
     def __call__(self) -> "int | None":
         # Thin wrapper around AuthKeys.resolve: same exit codes/no-traceback
         # contract as `resolve`, but bumps this command's own logger so the
@@ -81,8 +116,7 @@ class Check(LoggingArgs, Cmd):
             cfg = self.config_paths or _default_config_paths()
             auth = _build(cfg)
             username = self.username or utils.get_user().pw_name
-            for key in auth.resolve(username):
-                print(key)
+            _print_keys(list(auth.resolve(username)), self.format)
             return 0
         except SystemExit:
             raise

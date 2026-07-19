@@ -6,9 +6,10 @@ caching and user/group aliasing. Designed to be driven either from the CLI as an
 ``AuthorizedKeysCommand`` or as a long-running key server (``authkeys serve``).
 """
 
+import re
 import threading
-from argparse import Namespace
 from configparser import SectionProxy
+from dataclasses import dataclass
 from typing import Callable, Dict, Iterable, List, NamedTuple, Optional, Union
 
 from duho import logging
@@ -27,24 +28,43 @@ except Exception:  # not installed (bare source checkout)
 LOGGER = logging.getLogger("authkeys")
 
 
+# A recognized `authorized_keys` key-type token (prefix or exact set), per the
+# OpenSSH manual: ssh-rsa/ssh-dss/ssh-ed25519(-sk)/sk-ssh-ed25519@openssh.com/
+# ecdsa-sha2-*/sk-ecdsa-sha2-*, and their `*-cert-v01@openssh.com` cert variants.
+# Anything else as the first token (or any token containing `=`, i.e. an
+# options list like `command="...",no-pty`) is an options prefix, not a type.
+_KEY_TYPE_RE = re.compile(r"^(ssh-|ecdsa-|sk-)")
+
+
+def _is_options_prefix(token: str) -> bool:
+    return "=" in token or not _KEY_TYPE_RE.match(token)
+
+
 class AuthorizedKey(NamedTuple):
     type: str
     key: str
     comment: str
+    options: str = ""
 
     def __repr__(self) -> str:
-        if self.comment:
-            return f"{self.type} {self.key} {self.comment}"
-        return f"{self.type} {self.key}"
+        base = f"{self.type} {self.key} {self.comment}" if self.comment else f"{self.type} {self.key}"
+        if self.options:
+            return f"{self.options} {base}"
+        return base
 
     @classmethod
     def parse(cls, authorized_key: str, comment: "Optional[str]" = None) -> "AuthorizedKey":
+        options = ""
+        first, _, rest = authorized_key.partition(" ")
+        if first and _is_options_prefix(first):
+            options = first
+            authorized_key = rest
         parts = authorized_key.split(" ", maxsplit=2)
         if len(parts) < 2:
             raise ValueError(authorized_key)
         if len(parts) == 3 and comment is None:
             comment = parts[2]
-        return cls(parts[0], parts[1], comment or "")
+        return cls(parts[0], parts[1], comment or "", options)
 
     @classmethod
     def parse_all(
@@ -92,7 +112,8 @@ def default_sanitize(src: str, uid: str, key: AuthorizedKey) -> AuthorizedKey:
     return key
 
 
-class Source(Namespace):
+@dataclass
+class Source:
     cached: bool
     enabled: bool
     backend: "Optional[AuthkeysSource]"
@@ -341,9 +362,12 @@ class AuthKeys:
 
     def authorized_keys(self, username: str) -> "Iterable[AuthorizedKey]":
         usr_config = self.users.get(username) or UserConfig([username])
-        # Dedup on (type, key) -- NOT the whole tuple -- so the same public key
-        # coming from two sources (with different per-source comments) is emitted
-        # once, keeping the first comment seen.
+        # Dedup on (options, type, key) -- NOT the whole tuple -- so the same
+        # public key coming from two sources (with different per-source
+        # comments) is emitted once, keeping the first comment seen. An
+        # option-bearing key (e.g. `command="...",no-pty ssh-rsa AAAA`) is
+        # kept distinct from the bare form of the same key, since the options
+        # materially change what the key is allowed to do.
         seen: "set" = set()
 
         for src_name, src in self.sources.items():
@@ -352,7 +376,7 @@ class AuthKeys:
             for usr in usr_config.authorized_users:
                 uid = self.usermap(usr, src_name, src)
                 for key in self._resolve_source_user(src_name, src, usr, uid):
-                    identity = (key.type, key.key)
+                    identity = (key.options, key.type, key.key)
                     if identity not in seen:
                         seen.add(identity)
                         yield key

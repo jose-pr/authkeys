@@ -1,0 +1,66 @@
+# Example systemd unit for `authkeys serve`, the unattended HTTP key server.
+#
+# Copy to /etc/systemd/system/authkeys-serve.service, adjust the paths/user
+# below for your install, then:
+#   systemctl daemon-reload
+#   systemctl enable --now authkeys-serve
+#
+# Hardening notes:
+# - `authkeys serve` needs read access to every delegating user's ~/.ssh (for
+#   authorized_keys sources and ~/.ssh/authkeys.conf delegation), so it can't
+#   be sandboxed as tightly as a typical stateless service. Running it as a
+#   dedicated unprivileged account (DynamicUser= or a fixed User=) with that
+#   account added to a group granted read access to the relevant home
+#   directories is the recommended trade-off over running it as root.
+# - ProtectHome=read-only (rather than the stricter "yes"/"tmpfs") is what
+#   makes that ~/.ssh read access possible at all; tightening it further will
+#   break key resolution for file-backed sources.
+
+[Unit]
+Description=authkeys HTTP key server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/authkeys serve --config /etc/authkeys.conf
+
+# Identity: prefer DynamicUser for a fresh, unprivileged, unique UID/GID per
+# start. Switch to a fixed User=/Group= instead if you need a stable UID (for
+# example, to grant it a permanent supplementary group with ~/.ssh read
+# access) -- DynamicUser= and a static User= are mutually exclusive.
+DynamicUser=true
+# User=authkeys
+# Group=authkeys
+
+# Secrets: keep the API key out of the unit and out of authkeys.conf. Either
+# works; EnvironmentFile= keeps it out of `systemctl show`/process listings.
+Environment=AUTHKEYS_APIKEY=changeme
+# EnvironmentFile=/etc/authkeys/authkeys-serve.env
+
+# Sandboxing
+NoNewPrivileges=true
+ProtectSystem=strict
+# Needed so the service can read users' ~/.ssh/{authorized_keys,authkeys.conf}
+# for file-backed sources and per-user delegation -- see the note above.
+ProtectHome=read-only
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
