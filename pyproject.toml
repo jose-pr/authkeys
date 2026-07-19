@@ -41,6 +41,7 @@ authkeys = "authkeys.cli:run"
 
 [project.urls]
 Homepage = "https://github.com/jose-pr/authkeys/"
+Documentation = "https://jose-pr.github.io/authkeys/"
 Issues = "https://github.com/jose-pr/authkeys/issues"
 
 [tool.hatch.build.targets.sdist]
