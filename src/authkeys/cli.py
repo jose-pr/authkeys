@@ -7,7 +7,7 @@ server. ``resolve`` is also the default command when none is given.
 
 import typing as _ty
 
-from duho import AUTO, Args, Cmd, LoggingArgs, main
+from duho import AUTO, Arg, Args, Choice, Cmd, LoggingArgs, main, print_completion
 
 from . import AuthKeys, config, utils
 from .config import AuthkeysConfig
@@ -57,6 +57,40 @@ class Resolve(LoggingArgs, Cmd):
             return 3
 
 
+class Check(LoggingArgs, Cmd):
+    """Resolve a user's keys with per-source tracing on stderr (debugging)."""
+
+    _parsername_ = "check"
+    _logger_name_ = "authkeys"
+
+    username: _ty.Optional[str] = None
+    "User to resolve (defaults to the current user)"
+    ("username",)
+
+    config_paths: str = ""
+    "Colon-separated config paths (defaults to system paths)"
+    ("--config", "-c")
+
+    def __call__(self) -> "int | None":
+        # Thin wrapper around AuthKeys.resolve: same exit codes/no-traceback
+        # contract as `resolve`, but bumps this command's own logger so the
+        # existing per-source "Using source/Using cached source ... for X -> Y"
+        # log lines (already emitted by AuthKeys) surface to stderr.
+        self._logger_.setLevel("DEBUG")
+        try:
+            cfg = self.config_paths or _default_config_paths()
+            auth = _build(cfg)
+            username = self.username or utils.get_user().pw_name
+            for key in auth.resolve(username):
+                print(key)
+            return 0
+        except SystemExit:
+            raise
+        except BaseException as e:  # noqa: BLE001 - deliberate catch-all boundary
+            self._logger_.error(f"authkeys check failed: {e}")
+            return 3
+
+
 class Serve(LoggingArgs, Cmd):
     """Run the unattended HTTP key server."""
 
@@ -101,6 +135,7 @@ class Serve(LoggingArgs, Cmd):
                 "'api_key' line to run without authentication."
             )
 
+        require_auth = serve_conf is not None and "api_key" in serve_conf
         server = KeyServer(
             auth,
             bind=self.bind or opt("bind", "127.0.0.1"),
@@ -108,6 +143,7 @@ class Serve(LoggingArgs, Cmd):
             api_key=api_key,
             path=opt("path", "/keys"),
             max_usernames=int(opt("max_usernames", 16)),
+            require_auth=require_auth,
         )
         serve(server)
         return 0
@@ -195,16 +231,35 @@ class Cache(LoggingArgs, Cmd):
         return 2
 
 
+class Completion(Cmd):
+    """Print a shell completion script for the authkeys CLI."""
+
+    _parsername_ = "completion"
+
+    shell: "Arg[str, Choice('bash', 'zsh', 'fish')]" = "bash"
+    "Shell to generate a completion script for"
+    ("shell",)
+
+    def __call__(self) -> "int | None":
+        import sys
+
+        # Delegate to duho's own completion machinery rather than hand-rolling
+        # a shell script: it builds Authkeys's real parser tree (including
+        # this subcommand tree) and walks it into a self-contained script.
+        print_completion(Authkeys, self.shell, file=sys.stdout)
+        return 0
+
+
 class Authkeys(Args):
     """Pluggable AuthorizedKeysCommand provider for OpenSSH."""
 
     _parsername_ = "authkeys"
     _version_ = AUTO
     _distribution_ = "authkeys"
-    _subcommands_ = [Resolve, Serve, Cache]
+    _subcommands_ = [Resolve, Serve, Cache, Check, Completion]
 
 
-_COMMANDS = {"resolve", "keys", "serve", "cache"}
+_COMMANDS = {"resolve", "keys", "serve", "cache", "check", "completion"}
 
 
 def _with_default_command(argv: "_ty.Sequence[str]") -> "list[str]":

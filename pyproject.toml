@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "authkeys"
-version = "0.2.0"
+version = "0.3.0"
 authors = [{ name = "Jose A." }]
 description = "Pluggable AuthorizedKeysCommand provider for OpenSSH (file/HTTP/LDAP sources, TTL cache, optional key server)"
 readme = "README.md"

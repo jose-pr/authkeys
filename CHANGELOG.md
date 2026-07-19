@@ -4,6 +4,37 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-07-19
+
+Additive feature release — no breaking changes.
+
+### Added
+- **`authkeys.sources.github`**: fetch a user's public keys from GitHub's
+  plain-text `.keys` endpoint (`https://github.com/{username}.keys` by
+  default). The `url` template can be overridden to point at any forge with
+  the same convention (e.g. GitLab), so no separate source class is needed.
+  Uses the existing `[http]` extra (`requests`); no new extra.
+- **`authkeys check <user>`**: a debugging counterpart to `resolve` that
+  prints the same resolved keys to stdout while surfacing the per-source
+  resolution trace (which source served/cached which key) on stderr.
+- **`authkeys completion [bash|zsh|fish]`**: prints a self-contained shell
+  completion script (generated from the CLI's own argument parser via
+  `duho`'s completion support) for the given shell.
+- **Source registry**: `authkeys.sources.register_source(alias, cls)` and
+  `get_source(alias)` for programmatic lookup of source classes by short
+  name. The four built-in sources (`authorizedkeys`, `http`, `github`,
+  `ldap`) are registered through it; existing `backend =
+  authkeys.sources.<alias>` config resolution is unchanged.
+
+### Changed
+- `KeyServer.__init__` gained a `require_auth: bool = False` parameter: when
+  `True` and `api_key` is falsy, construction raises `ValueError` instead of
+  silently starting with authentication disabled. `authkeys serve` now passes
+  `require_auth=True` whenever `[serve]` configures an `api_key`, in addition
+  to its existing friendly `SystemExit` message — the user-facing CLI
+  behavior is unchanged, but the fail-closed invariant now also holds for
+  direct `KeyServer` construction (e.g. embedding authkeys as a library).
+
 ## [0.2.0] - 2026-07-19
 
 A security and robustness release from a second review pass. **One breaking

@@ -44,7 +44,17 @@ class KeyServer(ThreadingHTTPServer):
         api_key: Optional[str] = None,
         path: str = "/keys",
         max_usernames: int = 16,
+        require_auth: bool = False,
     ) -> None:
+        # Fail closed: when the caller asserts an api_key MUST be set (e.g. the
+        # CLI, when `[serve] api_key` is present in config) but it resolved
+        # empty (unset ${env:...}, typo), refuse construction rather than
+        # silently starting with authentication disabled.
+        if require_auth and not api_key:
+            raise ValueError(
+                "KeyServer: require_auth=True but api_key is empty; refusing "
+                "to start with authentication silently disabled."
+            )
         self.authkeys = authkeys
         self.api_key = api_key or None
         self.route = "/" + path.strip("/")
