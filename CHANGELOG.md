@@ -4,6 +4,38 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-07-19
+
+Additive feature release — no breaking changes.
+
+### Added
+- **Options-prefixed `authorized_keys` lines are now preserved verbatim.** A
+  real-world line like `command="...",no-pty ssh-rsa AAAA bob` was previously
+  misparsed (the options list was read as the key type). `AuthorizedKey` gains
+  an `options: str = ""` field; `parse` now detects an options prefix (a first
+  token containing `=`, or not matching a recognized key-type prefix) and
+  keeps it separate from `type`/`key`/`comment`, round-tripping byte-for-byte
+  through `resolve`/`serve` output. Deduplication now keys on
+  `(options, type, key)`, so an option-bearing key is kept distinct from the
+  bare form of the same key.
+- **`--format authorized_keys|json`** on `authkeys resolve` and
+  `authkeys check`. `authorized_keys` (default) is unchanged; `json` prints a
+  single JSON array of `{"type", "key", "comment", "options"}` objects instead,
+  for scripting/tooling consumers. `serve` is unaffected (always sshd wire
+  format).
+- **`examples/authkeys-serve.service`**: a template systemd unit for running
+  `authkeys serve`, with hardening directives (`DynamicUser=`,
+  `NoNewPrivileges=true`, `ProtectSystem=strict`, `PrivateTmp=true`, a minimal
+  `RestrictAddressFamilies=`, dropped capabilities) and both ways to supply
+  `AUTHKEYS_APIKEY` without putting it in `authkeys.conf`. Documented in
+  `docs/guide/server.md`, including why `ProtectHome=` is `read-only` rather
+  than stricter (the service needs to read users' `~/.ssh`).
+
+### Changed
+- **Internal refactor**: `Source` is now a `@dataclass` instead of an
+  `argparse.Namespace` subclass. Same fields (`cached`/`enabled`/`backend`/
+  `sanitize`/`expire`), same `from_config` signature, no behavior change.
+
 ## [0.3.0] - 2026-07-19
 
 Additive feature release — no breaking changes.

@@ -23,6 +23,14 @@ paths =
 Reads the listed files under each user's `~/.ssh/`, skipping blank and comment
 lines.
 
+A line that starts with an OpenSSH options prefix (e.g.
+`command="...",no-pty ssh-rsa AAAA... bob`) is preserved verbatim: the options
+are kept alongside the key rather than being misparsed as the key type, and
+they round-trip byte-for-byte through `resolve`/`serve` output. An
+option-bearing key is treated as distinct from the same key without options
+for deduplication purposes, since the options materially change what the key
+is allowed to do.
+
 ## HTTP
 
 ```ini

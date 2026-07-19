@@ -36,3 +36,28 @@ api_key = ${env:AUTHKEYS_APIKEY}
 `authkeys serve` honors each user's `~/.ssh/authkeys.conf` delegation, exactly as
 `authkeys resolve` does — a request for `alice` returns the keys of everyone
 `alice` has authorized.
+
+## Running under systemd
+
+[`examples/authkeys-serve.service`](https://github.com/jose-pr/authkeys/blob/master/examples/authkeys-serve.service)
+is a template unit for running `authkeys serve` as a systemd service. It sets
+`DynamicUser=` for an unprivileged, unique identity and a broad set of other
+hardening directives (`NoNewPrivileges=`, `ProtectSystem=strict`,
+`PrivateTmp=`, a minimal `RestrictAddressFamilies=`, dropped capabilities,
+...), and shows both ways to supply `AUTHKEYS_APIKEY` without putting it in
+`authkeys.conf` (`Environment=`/`EnvironmentFile=`).
+
+One directive is intentionally *not* at its strictest: `ProtectHome=read-only`
+rather than fully hiding home directories. `authkeys serve` needs to read
+each delegating user's `~/.ssh` (for file-backed sources and
+`~/.ssh/authkeys.conf` delegation), so home directories must stay readable —
+this is a deliberate trade-off, documented in the unit file itself, not an
+oversight.
+
+Copy the unit to `/etc/systemd/system/authkeys-serve.service`, adjust the
+config path and identity for your install, then:
+
+```bash
+systemctl daemon-reload
+systemctl enable --now authkeys-serve
+```
