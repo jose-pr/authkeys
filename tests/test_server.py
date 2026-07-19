@@ -99,3 +99,28 @@ def test_auth_disabled_when_no_api_key():
     auth.load_config(conf)
     srv = KeyServer(auth, bind="127.0.0.1", port=0, api_key=None)
     assert srv.check_auth([]) is True
+
+
+def test_require_auth_with_empty_api_key_raises():
+    # Fail-closed invariant lives in KeyServer itself now (not just cli.Serve):
+    # constructing with require_auth=True and a falsy api_key must refuse to
+    # start rather than silently disabling authentication.
+    conf = AuthkeysConfig.from_config(
+        {"cache": {}, "globals": {}, "source:test": {"backend": f"{__name__}.OneKeySource"}}
+    )
+    auth = AuthKeys()
+    auth.load_config(conf)
+    with pytest.raises(ValueError):
+        KeyServer(auth, bind="127.0.0.1", port=0, api_key="", require_auth=True)
+
+
+def test_require_auth_with_set_api_key_ok():
+    conf = AuthkeysConfig.from_config(
+        {"cache": {}, "globals": {}, "source:test": {"backend": f"{__name__}.OneKeySource"}}
+    )
+    auth = AuthKeys()
+    auth.load_config(conf)
+    srv = KeyServer(
+        auth, bind="127.0.0.1", port=0, api_key="secret", require_auth=True
+    )
+    assert srv.check_auth(["secret"]) is True
