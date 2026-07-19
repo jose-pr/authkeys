@@ -7,6 +7,7 @@ default to `true`. An optional `sanitize` callable can rewrite or drop each key.
 | ---------------------------------- | -------------------------------------- | --------- |
 | `authkeys.sources.authorizedkeys`  | `~/.ssh/authorized_keys*` files        | —         |
 | `authkeys.sources.http`            | an HTTP URL (`{username}` templated)   | `requests` |
+| `authkeys.sources.github`          | GitHub (or similar) `.keys` endpoint   | `requests` |
 | `authkeys.sources.ldap`            | X.509 certs in an LDAP directory       | `ldap3`, `cryptography` |
 
 ## File
@@ -35,6 +36,23 @@ address = https://keys.example.com/{username}
 `{username}` is percent-encoded before it is substituted, so a username can never
 alter the request path or query. `verify` accepts a bool-like value
 (`true`/`false`) to toggle TLS verification, or a path to a CA bundle.
+
+## GitHub
+
+```ini
+[source:github]
+backend = authkeys.sources.github
+# {username} is substituted per lookup. Defaults to GitHub; point at another
+# forge with the same `.keys` convention (e.g. GitLab) by overriding `url`:
+# url = https://gitlab.com/{username}.keys
+```
+
+Fetches `https://github.com/{username}.keys` by default — GitHub's plain-text
+list of a user's public keys, one per line, without comments. `{username}` is
+percent-encoded before it is substituted. Since the fetched keys have no
+comment, the default `sanitize` still adds `uid(src=...)` as usual. Uses the
+same optional `requests` dependency as the `http` source (`pip install
+authkeys[http]`); no separate extra.
 
 ## LDAP
 

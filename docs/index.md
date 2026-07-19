@@ -55,4 +55,6 @@ AuthorizedKeysCommandUser nobody
   delegation.
 - **[Key sources](guide/sources.md)** — the file, HTTP, and LDAP sources.
 - **[HTTP key server](guide/server.md)** — running and securing `authkeys serve`.
+- **[CLI commands](guide/cli.md)** — `check` (debugging) and `completion`
+  (shell completion scripts).
 - **[API Reference](api/reference.md)** — generated from the source docstrings.

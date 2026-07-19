@@ -32,6 +32,7 @@ nav:
       - Configuration: guide/configuration.md
       - Key sources: guide/sources.md
       - HTTP key server: guide/server.md
+      - CLI commands: guide/cli.md
   - API Reference:
       - Overview: api/reference.md
       - authkeys: api/authkeys.md

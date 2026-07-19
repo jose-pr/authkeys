@@ -4,4 +4,6 @@
 
 ::: authkeys.sources.http
 
+::: authkeys.sources.github
+
 ::: authkeys.sources.ldap
