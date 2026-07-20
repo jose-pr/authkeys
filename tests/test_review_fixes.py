@@ -140,11 +140,14 @@ def test_concurrent_resolution_is_correct_and_lock_not_held_across_fetch():
     def worker():
         results.append(list(auth.resolve("alice", load_delegation=False)))
 
-    threads = [threading.Thread(target=worker) for _ in range(8)]
+    threads = [threading.Thread(target=worker, daemon=True) for _ in range(8)]
     for t in threads:
         t.start()
     for t in threads:
-        t.join()
+        t.join(timeout=10)
+    # Bounded join + daemon threads: if a worker ever wedges (e.g. on a loaded
+    # CI runner) this fails fast instead of hanging the whole job forever.
+    assert not any(t.is_alive() for t in threads), "worker thread did not finish"
 
     assert all(len(r) == 1 for r in results)  # every caller gets the right key
     # A later resolve is served from cache (one of the concurrent writes landed).

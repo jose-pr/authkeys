@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "authkeys"
-version = "0.4.0"
+version = "0.4.1"
 authors = [{ name = "Jose A." }]
 description = "Pluggable AuthorizedKeysCommand provider for OpenSSH (file/HTTP/LDAP sources, TTL cache, optional key server)"
 readme = "README.md"
@@ -33,7 +33,7 @@ dependencies = ["duho"]
 http = ["requests"]
 ldap = ["ldap3", "cryptography"]
 all = ["requests", "ldap3", "cryptography"]
-dev = ["build", "hatchling", "pytest", "pytest-cov", "twine", "requests"]
+dev = ["build", "hatchling", "pytest", "pytest-cov", "pytest-timeout", "twine", "requests"]
 docs = ["mkdocs", "mkdocs-material", "mkdocstrings[python]"]
 
 [project.scripts]
@@ -50,6 +50,12 @@ exclude = ["/.*"]
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
+# Hard per-test timeout: the suite runs in seconds, so a test exceeding this is
+# hung (e.g. a socket/thread test wedged on a CI runner). Fail it with a
+# traceback instead of hanging the whole CI job. `thread` method works on
+# Windows runners (signal-based alarms do not).
+timeout = 60
+timeout_method = "thread"
 
 [tool.pyright]
 reportPrivateImportUsage = false
