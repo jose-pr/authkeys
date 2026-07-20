@@ -42,8 +42,15 @@ def server():
     thread.join(timeout=2)
 
 
+# Bypass any proxy configured in the environment: GitHub's Windows runners set
+# HTTP(S)_PROXY, and urllib would otherwise route these localhost requests through
+# a proxy that can't reach the ephemeral test server -- which hangs instead of
+# honoring the timeout. An empty ProxyHandler forces a direct connection.
+_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
+
 def _get(url):
-    with urllib.request.urlopen(url, timeout=5) as resp:
+    with _OPENER.open(url, timeout=5) as resp:
         return resp.status, resp.read().decode()
 
 

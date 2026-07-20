@@ -7,12 +7,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [0.4.1] - 2026-07-20
 
 ### Fixed
-- CI reliability: the test suite could hang indefinitely on a loaded runner
-  because a concurrency test joined its worker threads without a timeout. The
-  join is now bounded (and the threads are daemons), and a hard per-test
-  `timeout` (via `pytest-timeout`) is configured so any future socket/thread
-  stall fails fast with a traceback instead of hanging the CI job. No runtime
-  code changed.
+- CI reliability (test-only, no runtime code changed):
+  - The HTTP key-server tests now bypass any proxy configured in the environment
+    (GitHub's Windows runners set `HTTP(S)_PROXY`), which otherwise routed the
+    localhost test requests through an unreachable proxy and hung.
+  - A concurrency test joined its worker threads without a timeout; the join is
+    now bounded and the threads are daemons.
+  - A hard per-test `timeout` (via `pytest-timeout`) is configured so any future
+    socket/thread stall fails fast with a traceback instead of hanging the job.
 
 ## [0.4.0] - 2026-07-19
 
