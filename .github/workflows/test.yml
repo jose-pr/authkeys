@@ -66,4 +66,4 @@ jobs:
         # silently skip (pytest.importorskip) instead of actually running.
         run: python -m pip install -e ".[dev,http,ldap]"
       - name: Run tests
-        run: python -m pytest -q
+        run: python -m pytest -rA --tb=long -p no:cacheprovider
