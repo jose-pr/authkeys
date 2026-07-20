@@ -39,7 +39,7 @@ api_key = ${env:AUTHKEYS_APIKEY}
 
 ## Running under systemd
 
-[`examples/authkeys-serve.service`](https://github.com/jose-pr/authkeys/blob/master/examples/authkeys-serve.service)
+[`examples/authkeys-serve.service`](https://github.com/jose-pr/authkeys/blob/main/examples/authkeys-serve.service)
 is a template unit for running `authkeys serve` as a systemd service. It sets
 `DynamicUser=` for an unprivileged, unique identity and a broad set of other
 hardening directives (`NoNewPrivileges=`, `ProtectSystem=strict`,
