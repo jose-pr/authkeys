@@ -36,6 +36,37 @@ def _interpolate_env(text: str) -> str:
     )
 
 
+def _split_path_list(value: str) -> "List[str]":
+    """Split a colon-separated config-path list, preserving Windows drive letters.
+
+    ``--config`` accepts ``a.conf:b.conf`` (POSIX ``PATH`` style), but a Windows
+    absolute path such as ``C:\\etc\\authkeys.conf`` also contains a colon. A naive
+    ``split(":")`` turns it into ``["C", "\\etc\\authkeys.conf"]`` so the file is
+    never found -- and the caller silently gets an empty config. Re-join any
+    single-letter fragment that is a drive prefix.
+    """
+    parts = value.split(":")
+    if len(parts) == 1:
+        return parts
+    merged: "List[str]" = []
+    i = 0
+    while i < len(parts):
+        part = parts[i]
+        # A single alphabetic char followed by a path separator is a drive letter.
+        if (
+            len(part) == 1
+            and part.isalpha()
+            and i + 1 < len(parts)
+            and parts[i + 1][:1] in ("\\", "/")
+        ):
+            merged.append(f"{part}:{parts[i + 1]}")
+            i += 2
+            continue
+        merged.append(part)
+        i += 1
+    return [p for p in merged if p]
+
+
 class AuthkeysConfig(configparser.ConfigParser):
     CONF_PATHS = [Path("./authkeys.conf")]
 
@@ -56,7 +87,7 @@ class AuthkeysConfig(configparser.ConfigParser):
         if config is None:
             configs: Iterable = cls.CONF_PATHS
         elif isinstance(config, str):
-            configs = config.split(":")
+            configs = _split_path_list(config)
         elif isinstance(config, (bytes, Path, dict)):
             configs = [config]
         else:

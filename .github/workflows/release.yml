@@ -27,7 +27,8 @@ jobs:
       - name: Install package with all extras
         run: python -m pip install -e ".[dev,http,ldap]"
       - name: Run tests
-        run: python -m pytest -q
+        # -rA so a release-gate failure names the failing tests in the log.
+        run: python -m pytest -rA
 
   build:
     name: Build distribution

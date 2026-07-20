@@ -4,9 +4,17 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.4.1] - 2026-07-20
+## [0.4.0] - 2026-07-20
+
+Feature release with fixes — no breaking changes.
 
 ### Fixed
+- **`--config` with a Windows absolute path was silently ignored.** The
+  colon-separated path list was split naively, so `C:\path\authkeys.conf` became
+  `["C", "\path\authkeys.conf"]` and the file was never read — the caller got an
+  empty config with no error. For `authkeys serve` this also skipped the
+  fail-closed `api_key` check and left the server running unauthenticated.
+  Drive-letter prefixes are now preserved; POSIX `a.conf:b.conf` lists still split.
 - CI reliability (test-only, no runtime code changed):
   - The HTTP key-server tests now bypass any proxy configured in the environment
     (GitHub's Windows runners set `HTTP(S)_PROXY`), which otherwise routed the
@@ -15,10 +23,6 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
     now bounded and the threads are daemons.
   - A hard per-test `timeout` (via `pytest-timeout`) is configured so any future
     socket/thread stall fails fast with a traceback instead of hanging the job.
-
-## [0.4.0] - 2026-07-19
-
-Additive feature release — no breaking changes.
 
 ### Added
 - **Options-prefixed `authorized_keys` lines are now preserved verbatim.** A

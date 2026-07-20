@@ -50,3 +50,29 @@ def test_cache_and_globals_sections_always_present():
     conf = AuthkeysConfig.from_config()
     assert conf.has_section("cache")
     assert conf.has_section("globals")
+
+
+# --- Windows drive-letter paths in --config (regression) -------------------
+
+
+def test_windows_absolute_path_is_not_split_on_drive_colon(tmp_path):
+    r"""A Windows absolute path must not be split into drive + remainder.
+
+    ``--config C:\path\ak.conf`` previously became ``["C", "\path\ak.conf"]``, so
+    the file was never read and the caller silently got an empty config (which,
+    for ``serve``, skipped the fail-closed api_key check and hung).
+    """
+    p = tmp_path / "ak.conf"
+    p.write_text("[serve]\napi_key = secret\n")
+    conf = AuthkeysConfig.from_config(str(p))
+    assert conf.has_section("serve")
+    assert conf["serve"]["api_key"] == "secret"
+
+
+def test_colon_separated_list_still_splits(tmp_path):
+    a = tmp_path / "a.conf"
+    b = tmp_path / "b.conf"
+    b.write_text("[globals]\nk = from_b\n")
+    # First path doesn't exist -> falls through to the second.
+    conf = AuthkeysConfig.from_config(f"{a}:{b}")
+    assert conf["globals"]["k"] == "from_b"
