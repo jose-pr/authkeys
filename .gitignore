@@ -6,6 +6,7 @@ site/
 
 # Agent/harness tooling (never commit these)
 .agents
+*.local.md
 CLAUDE.md
 CLAUDE.local.md
 .claude/
