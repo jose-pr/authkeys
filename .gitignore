@@ -5,7 +5,7 @@ site/
 *.egg-info/
 
 # Agent/harness tooling (never commit these)
-.agents/
+.agents
 CLAUDE.md
 CLAUDE.local.md
 .claude/
