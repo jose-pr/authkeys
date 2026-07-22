@@ -3,7 +3,7 @@
 Header-style reference for the `authkeys` package: every public export with its
 signature, arguments, contract, and gotchas, so this package can be consumed
 without a source dive. Kept current with the public API. For the project
-overview and code layout, see the repo-root overview doc.
+overview and code layout, see the shipped `README.md`, or <https://github.com/jose-pr/authkeys>.
 
 POSIX-only at runtime (`pwd`/`grp` imported lazily) — noted per entry below.
 
