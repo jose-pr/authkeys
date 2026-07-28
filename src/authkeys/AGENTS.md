@@ -145,7 +145,7 @@ section; each is also importable directly as its real class.
 
 ## CLI (`authkeys.cli`)
 
-Built on `duho`; see that project's own package header for the `Args`/`Cmd`
+Built on `duho`; see that project's own package header for the `Cli`/`Cmd`
 model this builds on.
 
 - **`run(argv: Sequence[str] | None = None) -> int | None`** — the console

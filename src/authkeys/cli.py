@@ -8,7 +8,7 @@ server. ``resolve`` is also the default command when none is given.
 import json
 import typing as _ty
 
-from duho import AUTO, Arg, Args, Choice, Cmd, LoggingArgs, main, print_completion
+from duho import AUTO, Arg, Args, Choice, Cli, Cmd, LoggingArgs, app, main, print_completion
 
 from . import AuthKeys, AuthorizedKey, config, utils
 from .config import AuthkeysConfig
@@ -284,7 +284,7 @@ class Completion(Cmd):
         return 0
 
 
-class Authkeys(Args):
+class Authkeys(LoggingArgs, Cli):
     """Pluggable AuthorizedKeysCommand provider for OpenSSH."""
 
     _parsername_ = "authkeys"
@@ -323,4 +323,5 @@ def run(argv: "_ty.Sequence[str] | None" = None) -> "int | None":
 
     if argv is None:
         argv = sys.argv[1:]
-    return main(Authkeys, _with_default_command(argv))
+    return app(Authkeys, argv=_with_default_command(argv))
+
