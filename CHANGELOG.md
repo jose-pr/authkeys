@@ -6,6 +6,24 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.4.3] - 2026-08-16
+
+Maintenance release — a dependency-range change only, with no change to
+authkeys' own behavior or API.
+
+### Changed
+- **The `duho` requirement is now scoped to its minor series:
+  `>=0.5.0,<0.6.0`** (was `>=0.5.1,<0.6.0`). The ceiling is unchanged and the
+  floor moves down to the start of the series, because nothing authkeys uses
+  postdates it: the entire duho surface it imports — `AUTO`, `Arg`, `Args`,
+  `Choice`, `Cli`, `Cmd`, `LoggingArgs`, `app`, `main`, `print_completion` and
+  `duho.logging` — is present in 0.5.0. The old 0.5.1 floor recorded which duho
+  happened to be current when the pin was written rather than anything authkeys
+  requires; 0.5.1's only change was a `getclsdef` fix for modules whose
+  `__file__` is not on disk (a zipapp), which a normally installed authkeys
+  never reaches. The full test suite passes against both ends of the range,
+  duho 0.5.0 and 0.5.4, on Python 3.9 and 3.14.
+
 ## [0.4.2] - 2026-08-16
 
 Bug-fix release with small additions — no breaking changes.

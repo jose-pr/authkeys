@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "authkeys"
-version = "0.4.2"
+version = "0.4.3"
 authors = [{ name = "Jose A." }]
 description = "Pluggable AuthorizedKeysCommand provider for OpenSSH (file/HTTP/LDAP sources, TTL cache, optional key server)"
 readme = "README.md"
@@ -27,7 +27,7 @@ classifiers = [
     "Topic :: System :: Systems Administration :: Authentication/Directory",
     "Typing :: Typed",
 ]
-dependencies = ["duho>=0.5.1,<0.6.0"]
+dependencies = ["duho>=0.5.0,<0.6.0"]
 
 [project.optional-dependencies]
 http = ["requests"]
