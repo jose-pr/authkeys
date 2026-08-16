@@ -105,6 +105,42 @@ def test_resolve_format_json_matches_resolved_keys(tmp_path, monkeypatch, capsys
     ]
 
 
+def test_resolve_format_json_handles_options_with_quoted_spaces(
+    tmp_path, monkeypatch, capsys
+):
+    # The documented structured output must carry the real fields for an
+    # sshd-legal `command="a b"` line, not the shifted ones a first-space
+    # split produced.
+    line = 'command="/usr/bin/tunnel -n 5",no-pty ssh-ed25519 AAAAC3Nza bob'
+    conf, fake_pwd = _file_source_config(tmp_path, [line])
+    monkeypatch.setitem(sys.modules, "pwd", fake_pwd)
+
+    rc = run(["resolve", "alice", "--config", str(conf), "--format", "json"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert json.loads(out) == [
+        {
+            "type": "ssh-ed25519",
+            "key": "AAAAC3Nza",
+            "comment": "bob",
+            "options": 'command="/usr/bin/tunnel -n 5",no-pty',
+        }
+    ]
+
+
+def test_resolve_wire_format_preserves_options_with_quoted_spaces(
+    tmp_path, monkeypatch, capsys
+):
+    line = 'command="/usr/bin/tunnel -n 5",no-pty ssh-ed25519 AAAAC3Nza bob'
+    conf, fake_pwd = _file_source_config(tmp_path, [line])
+    monkeypatch.setitem(sys.modules, "pwd", fake_pwd)
+
+    rc = run(["resolve", "alice", "--config", str(conf)])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert out.splitlines() == [line]
+
+
 def test_resolve_format_default_unchanged(tmp_path, monkeypatch, capsys):
     conf, fake_pwd = _file_source_config(tmp_path, [RSA])
     monkeypatch.setitem(sys.modules, "pwd", fake_pwd)

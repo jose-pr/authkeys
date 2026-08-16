@@ -4,6 +4,23 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- **Options containing quoted spaces were misparsed.** `AuthorizedKey.parse`
+  ended the options token at the first space, so an sshd-legal line such as
+  `command="/usr/bin/tunnel -n 5",no-pty ssh-ed25519 AAAA bob` was split at the
+  wrong offsets — `type`, `key`, `comment` and `options` all held fragments of
+  the wrong fields. The options token is now scanned quote-aware (a space ends
+  it only outside double quotes; `\"` escapes a quote inside a quoted value).
+  A line with an unterminated quote is now rejected as malformed instead of
+  yielding shifted fields.
+
+  This was invisible in the default `authorized_keys` output, which rejoins the
+  fields with single spaces and so round-tripped anyway; it corrupted
+  `--format json`, the `(options, type, key)` dedup identity used across
+  sources, and the comment injected by `default_sanitize`.
+
 ## [0.4.1] - 2026-07-28
 
 Maintenance release.

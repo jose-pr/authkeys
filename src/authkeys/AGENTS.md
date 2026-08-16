@@ -16,6 +16,11 @@ POSIX-only at runtime (`pwd`/`grp` imported lazily) — noted per entry below.
     `authorized_keys` line. Splits off a leading **options prefix** (a first
     token containing `=`, or not matching `^(ssh-|ecdsa-|sk-)`) before
     `type key [comment]`; raises `ValueError` if fewer than 2 tokens remain.
+    The options token is **quote-aware**, per sshd(8): a space ends it only
+    outside double quotes, and `\"` escapes a quote within a quoted value, so
+    `command="/usr/bin/tunnel -n 5",no-pty ssh-ed25519 AAAA bob` keeps its real
+    `type`/`key`/`comment`. An unterminated quote consumes the rest of the line
+    and therefore raises `ValueError` rather than yielding shifted fields.
   - `AuthorizedKey.parse_all(keys: str | Iterable[AuthorizedKey | str] | None) ->
     Iterable[AuthorizedKey]` — a string is split on lines; blank/`#`-comment
     lines are skipped; already-parsed entries pass through unchanged.

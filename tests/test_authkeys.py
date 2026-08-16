@@ -102,6 +102,87 @@ def test_parse_rejects_options_only_line():
         AuthorizedKey.parse('command="x",no-pty')
 
 
+# --- Options containing quoted spaces --------------------------------------
+#
+# sshd(8): the options list is the first token, "no spaces are permitted,
+# except within double quotes", and \" escapes a quote inside a quoted value.
+# A `partition(" ")` on the first space cuts such a token in half and shifts
+# every following field; the wire format still round-tripped (repr rejoins
+# with single spaces), which is why only JSON/dedup/sanitize showed the damage.
+
+QUOTED = 'command="/usr/bin/tunnel -n 5",no-pty ssh-ed25519 AAAAC3Nza bob'
+ESCAPED = 'command="echo \\"hi there\\"",no-pty ssh-ed25519 AAAAC3Nza bob'
+
+
+def test_parse_options_with_quoted_space_keeps_fields_aligned():
+    k = AuthorizedKey.parse(QUOTED)
+    assert k.options == 'command="/usr/bin/tunnel -n 5",no-pty'
+    assert (k.type, k.key, k.comment) == ("ssh-ed25519", "AAAAC3Nza", "bob")
+
+
+def test_parse_options_with_quoted_space_round_trips_byte_for_byte():
+    assert str(AuthorizedKey.parse(QUOTED)) == QUOTED
+
+
+def test_parse_options_with_escaped_quote_keeps_fields_aligned():
+    k = AuthorizedKey.parse(ESCAPED)
+    assert k.options == 'command="echo \\"hi there\\"",no-pty'
+    assert (k.type, k.key, k.comment) == ("ssh-ed25519", "AAAAC3Nza", "bob")
+    assert str(k) == ESCAPED
+
+
+def test_parse_options_with_quoted_space_and_no_comment():
+    line = 'command="a b" ssh-rsa AAAAB3Nza'
+    k = AuthorizedKey.parse(line)
+    assert k.options == 'command="a b"'
+    assert (k.type, k.key, k.comment) == ("ssh-rsa", "AAAAB3Nza", "")
+    assert str(k) == line
+
+
+def test_parse_rejects_unterminated_quote_in_options():
+    # Decision: the unterminated quote swallows the rest of the line, leaving
+    # nothing to parse as type/key -- the same skip-and-log path as any other
+    # malformed line, rather than a silent misparse.
+    with pytest.raises(ValueError):
+        AuthorizedKey.parse('command="oops ssh-rsa AAAAB3Nza bob')
+
+
+def test_parse_all_skips_line_with_unterminated_quote():
+    text = f'command="oops ssh-rsa AAAA bob\n{RSA} a\n'
+    with pytest.raises(ValueError):
+        list(AuthorizedKey.parse_all(text))
+
+
+def test_default_sanitize_injects_comment_for_quoted_space_options():
+    # The injected comment keys off `comment`, which was garbage before the
+    # quote-aware split (it used to absorb the real type/key tokens).
+    k = AuthorizedKey.parse('command="a b",no-pty ssh-rsa AAAAB3Nza')
+    sanitized = default_sanitize("src", "alice", k)
+    assert sanitized.comment == "alice(src=src)"
+    assert sanitized.options == 'command="a b",no-pty'
+    assert (sanitized.type, sanitized.key) == ("ssh-rsa", "AAAAB3Nza")
+
+
+def test_dedup_identity_uses_real_fields_for_quoted_space_options():
+    # Two lines whose *options* differ only inside the quotes must stay
+    # distinct, and a repeat of the same line must still collapse to one.
+    StaticSource.registry.clear()
+    auth = AuthKeys()
+    auth.load_config(_config())
+    src = StaticSource.registry["test"]
+    src.keys = {
+        "alice": [
+            'command="a b",no-pty {}'.format(ED),
+            'command="a c",no-pty {}'.format(ED),
+            'command="a b",no-pty {}'.format(ED),
+        ]
+    }
+    keys = list(auth.authorized_keys("alice"))
+    assert len(keys) == 2
+    assert {k.options for k in keys} == {'command="a b",no-pty', 'command="a c",no-pty'}
+    assert {(k.type, k.key) for k in keys} == {("ssh-ed25519", "AAAAC3Nza")}
+
+
 def test_dedup_treats_option_bearing_and_bare_key_as_distinct():
     StaticSource.registry.clear()
     auth = AuthKeys()

@@ -40,6 +40,33 @@ def _is_options_prefix(token: str) -> bool:
     return "=" in token or not _KEY_TYPE_RE.match(token)
 
 
+def _split_first_token(line: str) -> "tuple":
+    """Split ``line`` into (first token, remainder), honoring double quotes.
+
+    Per sshd(8) the options list is the first token of an ``authorized_keys``
+    line and "no spaces are permitted, except within double quotes"; a ``\\"``
+    escapes a quote inside a quoted value. So a plain ``partition(" ")`` cuts
+    ``command="/usr/bin/tunnel -n 5",no-pty`` in half. This walks the line
+    instead, ending the token only at a space that is *outside* quotes.
+
+    An unterminated quote consumes the rest of the line, leaving an empty
+    remainder -- ``AuthorizedKey.parse`` then raises ``ValueError``, which is
+    the same skip-and-log path any other malformed line takes.
+    """
+    quoted = False
+    escaped = False
+    for index, char in enumerate(line):
+        if escaped:
+            escaped = False
+        elif quoted and char == "\\":
+            escaped = True
+        elif char == '"':
+            quoted = not quoted
+        elif char == " " and not quoted:
+            return line[:index], line[index + 1 :]
+    return line, ""
+
+
 class AuthorizedKey(NamedTuple):
     type: str
     key: str
@@ -55,7 +82,7 @@ class AuthorizedKey(NamedTuple):
     @classmethod
     def parse(cls, authorized_key: str, comment: "Optional[str]" = None) -> "AuthorizedKey":
         options = ""
-        first, _, rest = authorized_key.partition(" ")
+        first, rest = _split_first_token(authorized_key)
         if first and _is_options_prefix(first):
             options = first
             authorized_key = rest
