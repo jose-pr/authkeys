@@ -6,6 +6,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-08-16
+
+Bug-fix release with small additions — no breaking changes.
+
 ### Added
 - **A warning when no config file is found.** If `--config` (or the system
   search path) names only paths that do not exist, `AuthkeysConfig.from_config`
