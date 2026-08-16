@@ -76,3 +76,46 @@ def test_colon_separated_list_still_splits(tmp_path):
     # First path doesn't exist -> falls through to the second.
     conf = AuthkeysConfig.from_config(f"{a}:{b}")
     assert conf["globals"]["k"] == "from_b"
+
+
+# --- Missing-config warning ------------------------------------------------
+#
+# "Resolved no keys" is a success for an AuthorizedKeysCommand, so a typo'd
+# --config looks exactly like a user with no keys. Assertions use caplog, not
+# capsys: duho's init_stderr_logging attaches its handler once per process, so
+# a handler built in an earlier test holds a stale sys.stderr and capsys misses
+# later log lines (see .agents/AGENTS.md).
+
+
+def test_warns_when_no_config_path_exists(tmp_path, caplog):
+    missing_a = tmp_path / "nope-a.conf"
+    missing_b = tmp_path / "nope-b.conf"
+    with caplog.at_level("WARNING", logger="authkeys"):
+        conf = AuthkeysConfig.from_config(f"{missing_a}:{missing_b}")
+    # Still an empty, usable config -- the caller must keep exiting 0.
+    assert conf.sections() == ["cache", "globals"]
+    warnings = [r for r in caplog.records if r.levelname == "WARNING"]
+    assert len(warnings) == 1
+    message = warnings[0].getMessage()
+    assert "No config file found" in message
+    # The searched paths are named, so a typo is visible in the message.
+    assert str(missing_a) in message
+    assert str(missing_b) in message
+
+
+def test_no_warning_when_a_config_path_exists(tmp_path, caplog):
+    missing = tmp_path / "nope.conf"
+    real = tmp_path / "real.conf"
+    real.write_text("[globals]\nusermap = x\n")
+    with caplog.at_level("WARNING", logger="authkeys"):
+        conf = AuthkeysConfig.from_config(f"{missing}:{real}")
+    assert conf["globals"]["usermap"] == "x"
+    assert [r for r in caplog.records if r.levelname == "WARNING"] == []
+
+
+def test_no_warning_for_dict_or_bytes_config(caplog):
+    # Non-path sources are real configs; there is nothing to have "not found".
+    with caplog.at_level("WARNING", logger="authkeys"):
+        AuthkeysConfig.from_config({"globals": {"usermap": "x"}})
+        AuthkeysConfig.from_config(b"[globals]\nusermap = y\n")
+    assert [r for r in caplog.records if r.levelname == "WARNING"] == []

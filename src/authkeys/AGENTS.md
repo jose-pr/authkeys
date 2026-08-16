@@ -83,7 +83,11 @@ POSIX-only at runtime (`pwd`/`grp` imported lazily) — noted per entry below.
     take the **first existing** path and stop; `bytes`/`dict` items are
     always merged in. `${env:VAR}` in file text/bytes is interpolated from
     `os.environ` (a missing variable expands to an empty string) before
-    parsing.
+    parsing. If **path** candidates were given and **none** existed, one
+    `WARNING` is logged to the `authkeys` logger naming every path searched,
+    and an empty config is still returned — callers must keep exiting 0, since
+    "no keys" is a valid `AuthorizedKeysCommand` answer. `bytes`/`dict`
+    sources never trigger the warning.
 - **`SYSTEM_CONF_PATHS`** — the built-in system config search path.
   **`USER_CONF_PATH`** — `.ssh/authkeys.conf`, relative to a user's home.
 

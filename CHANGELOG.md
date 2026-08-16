@@ -6,6 +6,18 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- **A warning when no config file is found.** If `--config` (or the system
+  search path) names only paths that do not exist, `AuthkeysConfig.from_config`
+  now logs one warning listing every path it searched. The exit code stays `0`
+  and stdout stays empty — sshd's `AuthorizedKeysCommand` contract does not
+  allow failing a login over this — but a typo'd `--config` is no longer
+  indistinguishable from a user who genuinely has no keys. A `bytes`/`dict`
+  config never triggers it.
+- The exit-code convention is now documented in the CLI guide: `0` on success
+  **including "no keys"**, `3` on a config or internal error (`cache` also uses
+  `2` for an unknown action).
+
 ### Fixed
 - **Options containing quoted spaces were misparsed.** `AuthorizedKey.parse`
   ended the options token at the first space, so an sshd-legal line such as

@@ -3,6 +3,24 @@
 Besides `resolve` (the default) and `serve`, a few small commands help with
 debugging, cache management, and shell integration.
 
+## Exit codes
+
+`resolve` and `check` follow the `AuthorizedKeysCommand` contract:
+
+| Code | Meaning |
+| ---- | ------- |
+| `0`  | Success — **including "no keys"**. An empty stdout is a valid answer; sshd reads it as "this user has no authorized keys" and denies the login. |
+| `3`  | Config or internal error (unreadable config, a broken `backend =`, a source that raised). One line is logged to stderr; stdout stays empty and no traceback is ever printed, so nothing lands in `auth.log`. |
+
+Because "resolved nothing" is a success, a typo'd `--config` would otherwise be
+indistinguishable from a user with no keys. When **none** of the configured
+config paths exist, authkeys logs a warning naming the paths it searched — the
+exit code stays `0` and stdout stays empty, since sshd's contract does not
+allow failing the login over it.
+
+`cache` also uses `3` for "no cache configured" or an action the backend cannot
+support, and `2` for an unknown action.
+
 ## `check`
 
 ```bash

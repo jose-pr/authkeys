@@ -10,6 +10,10 @@ import os
 from pathlib import Path
 from typing import Iterable, List, Union
 
+from duho import logging
+
+LOGGER = logging.getLogger("authkeys")
+
 SYSTEM_CONF_PATHS = [
     Path("/etc/authkeys.conf"),
     Path("/etc/authkeys/authkeys.conf"),
@@ -93,15 +97,33 @@ class AuthkeysConfig(configparser.ConfigParser):
         else:
             configs = config
 
+        searched: "List[Path]" = []
+        loaded = False
         for item in configs:
             if isinstance(item, str):
                 item = Path(item)
             if isinstance(item, Path):
+                searched.append(item)
                 if item.exists():
                     conf.read_string(_interpolate_env(item.read_text()))
+                    loaded = True
                     break
             elif isinstance(item, bytes):
                 conf.read_string(_interpolate_env(item.decode()))
+                loaded = True
             elif isinstance(item, dict):
                 conf.read_dict(item)
+                loaded = True
+
+        # "Resolved no keys" is a success for an AuthorizedKeysCommand, so a
+        # typo'd --config is otherwise indistinguishable from a user who simply
+        # has none: empty stdout, exit 0, nothing logged. Say so once. The exit
+        # code deliberately stays 0 -- sshd's contract does not let us fail the
+        # login over a missing config file.
+        if searched and not loaded:
+            LOGGER.warning(
+                "No config file found; resolving with an empty configuration "
+                "(searched: %s)",
+                ", ".join(str(p) for p in searched),
+            )
         return conf
