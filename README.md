@@ -7,9 +7,10 @@
 
 A pluggable OpenSSH [`AuthorizedKeysCommand`](https://man.openbsd.org/sshd_config#AuthorizedKeysCommand)
 provider. It resolves a user's authorized SSH keys from one or more configured
-**sources** — local key files, an HTTP endpoint, or LDAP-stored X.509
-certificates — with optional TTL caching, user/group aliasing, and a small
-unattended HTTP key server for hosts that fetch keys centrally.
+**sources** — local key files, an HTTP endpoint, a GitHub-style `.keys`
+endpoint, or LDAP-stored X.509 certificates — with optional TTL caching,
+user/group aliasing, and a small unattended HTTP key server for hosts that
+fetch keys centrally.
 
 Built on the [duho](https://github.com/jose-pr/duho) declarative CLI framework.
 
@@ -40,6 +41,18 @@ Wire it into `sshd_config`:
 AuthorizedKeysCommand /usr/bin/authkeys resolve %u
 AuthorizedKeysCommandUser nobody
 ```
+
+Alongside those, `authkeys check` resolves a user with per-source tracing on
+stderr (which source produced which key), `authkeys cache show|purge|warm`
+inspects and manages the on-disk cache, and `authkeys completion bash|zsh|fish`
+prints a shell completion script. `resolve` and `check` also take
+`--format authorized_keys|json`, where `json` emits one object per key with
+`type`, `key`, `comment`, and `options` for scripting. See the
+[CLI guide](https://jose-pr.github.io/authkeys/guide/cli/) for details.
+
+`resolve` and `check` exit `0` on success — including when no keys were found,
+which sshd reads as "no keys" — and `3` on a config or internal error, never a
+traceback.
 
 ## Configuration
 
@@ -74,6 +87,7 @@ basedn = o=Example,c=US
 | ---------------------------------- | -------------------------------------------- | --------- |
 | `authkeys.sources.authorizedkeys`  | `~/.ssh/authorized_keys*` files              | —         |
 | `authkeys.sources.http`            | an HTTP URL (`{username}` templated)         | `requests` |
+| `authkeys.sources.github`          | a GitHub (or similar) `.keys` endpoint       | `requests` |
 | `authkeys.sources.ldap`            | X.509 certs in an LDAP directory             | `ldap3`, `cryptography` |
 
 Each `[source:<name>]` section supports `enabled` and `cached` (both default

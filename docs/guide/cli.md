@@ -1,7 +1,7 @@
 # CLI commands
 
 Besides `resolve` (the default) and `serve`, a few small commands help with
-debugging and shell integration.
+debugging, cache management, and shell integration.
 
 ## `check`
 
@@ -31,6 +31,26 @@ wire format — this is what `AuthorizedKeysCommand` expects and what `serve`
 always returns. `json` prints a single JSON array instead, one object per key
 with `type`, `key`, `comment`, and `options` fields, for scripting or tooling
 that wants structured output rather than parsing the wire format itself.
+
+## `cache`
+
+```bash
+authkeys cache show                 # list entries with ages
+authkeys cache purge --expired      # drop expired entries
+authkeys cache purge --user alice   # drop one user (or --source, --all)
+authkeys cache warm alice bob       # pre-resolve users (e.g. from cron)
+```
+
+Inspects and manages the resolved-keys cache. `show` and `purge` need an
+on-disk backend — an in-memory cache lives only inside the process that
+created it, so there is nothing for a separate CLI invocation to see, and those
+actions exit `3` rather than silently reporting an empty cache. `warm`
+pre-resolves users into the cache and works with any backend (though with an
+in-memory one it accomplishes nothing beyond that process).
+
+See [Configuration → Cache](configuration.md#cache) for the `[cache]`
+section itself: backends, `expire`, per-source TTL overrides, and
+`expired_on_error`.
 
 ## `completion`
 
