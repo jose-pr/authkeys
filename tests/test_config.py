@@ -83,8 +83,8 @@ def test_colon_separated_list_still_splits(tmp_path):
 # "Resolved no keys" is a success for an AuthorizedKeysCommand, so a typo'd
 # --config looks exactly like a user with no keys. Assertions use caplog, not
 # capsys: duho's init_stderr_logging attaches its handler once per process, so
-# a handler built in an earlier test holds a stale sys.stderr and capsys misses
-# later log lines (see .agents/AGENTS.md).
+# a handler built in an earlier test holds a stale sys.stderr from before
+# capsys's per-test swap, and capsys then misses later log lines.
 
 
 def test_warns_when_no_config_path_exists(tmp_path, caplog):
