@@ -291,6 +291,12 @@ class Authkeys(LoggingArgs, Cli):
     _version_ = AUTO
     _distribution_ = "authkeys"
     _subcommands_ = [Resolve, Serve, Cache, Check, Completion]
+    # authkeys is a credentials tool: an MCP-exposed `resolve`/`check` would
+    # hand a caller a user's real `authorized_keys` content, and MCP-exposed
+    # `serve` would start a listener as the side effect of a single tool
+    # call. Neither is a safe default here, so the whole app opts out of
+    # duho's `<NAME>_MCP=stdio` auto-launch trigger.
+    _mcp_ = False
 
 
 _COMMANDS = {"resolve", "keys", "serve", "cache", "check", "completion"}

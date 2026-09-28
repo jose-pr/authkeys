@@ -14,6 +14,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `duho.logging` — is unchanged by 0.6.0. The full test suite passes against
   the installed `duho==0.6.0` wheel on Python 3.9 and 3.14.
 
+### Added
+- **Opted the whole CLI out of duho's MCP auto-launch.** duho 0.6.0 makes
+  every `app()`/`main()` call check `AUTHKEYS_MCP=stdio` and, when set,
+  serve MCP tools instead of running the requested command. `Authkeys` (the
+  CLI root) now declares `_mcp_ = False`, disabling that env trigger for the
+  whole app: `authkeys` never listens for `AUTHKEYS_MCP` and always runs as
+  a normal CLI. authkeys is a credentials tool — an MCP-exposed `resolve`/
+  `check` would hand a caller a user's real `authorized_keys` content, and
+  MCP-exposed `serve` would start a listener as the side effect of a single
+  tool call — neither is a safe default here.
+
 ## [0.4.3] - 2026-08-16
 
 Maintenance release — a dependency-range change only, with no change to
