@@ -6,6 +6,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.4.4] - 2026-09-28
+
+Maintenance release: follows duho's 0.6.x ceiling bump and opts the CLI out
+of duho's new MCP auto-launch by default — no other change to authkeys' own
+behavior or public API.
+
 ### Changed
 - **The `duho` requirement moves to its 0.6.x series: `>=0.6.0,<0.7.0`** (was
   `>=0.5.0,<0.6.0`). Ceiling-following bump, not a floor raise for a feature
