@@ -6,6 +6,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+- **The `duho` requirement moves to its 0.6.x series: `>=0.6.0,<0.7.0`** (was
+  `>=0.5.0,<0.6.0`). Ceiling-following bump, not a floor raise for a feature
+  authkeys uses: the entire duho surface it imports — `AUTO`, `Arg`, `Args`,
+  `Choice`, `Cli`, `Cmd`, `LoggingArgs`, `app`, `main`, `print_completion` and
+  `duho.logging` — is unchanged by 0.6.0. The full test suite passes against
+  the installed `duho==0.6.0` wheel on Python 3.9 and 3.14.
+
 ## [0.4.3] - 2026-08-16
 
 Maintenance release — a dependency-range change only, with no change to

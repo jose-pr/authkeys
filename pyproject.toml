@@ -27,7 +27,7 @@ classifiers = [
     "Topic :: System :: Systems Administration :: Authentication/Directory",
     "Typing :: Typed",
 ]
-dependencies = ["duho>=0.5.0,<0.6.0"]
+dependencies = ["duho>=0.6.0,<0.7.0"]
 
 [project.optional-dependencies]
 http = ["requests"]
