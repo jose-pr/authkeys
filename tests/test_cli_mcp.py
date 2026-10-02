@@ -1,45 +1,60 @@
-"""`Authkeys._mcp_ = False` opts the whole CLI out of duho's
-``AUTHKEYS_MCP=stdio`` auto-launch trigger.
+"""authkeys serves MCP over stdio when ``AUTHKEYS_MCP=stdio`` is set (duho's
+default launch trigger), and runs as a normal CLI when it is not."""
 
-authkeys is a credentials tool: an MCP-exposed `resolve`/`check` would hand a
-caller a user's real `authorized_keys` content, and MCP-exposed `serve`
-would start a listener as the side effect of a single tool call. Neither is
-a safe default here (see CHANGELOG), so the opt-out must actually hold: a
-normal CLI run must proceed even when the trigger env var is set, never
-diverting into serving MCP tools over stdio.
-"""
-
+import json
 import os
+import subprocess
+import sys
+from pathlib import Path
 
-import pytest
+from authkeys.cli import Authkeys
 
-from authkeys.cli import Authkeys, run
-
-
-def test_root_declares_mcp_opt_out():
-    assert Authkeys._mcp_ is False
+SRC = str(Path(__file__).resolve().parents[1] / "src")
 
 
-def test_authkeys_mcp_stdio_env_does_not_start_mcp_server(monkeypatch, capsys):
-    # Without the opt-out, duho's `<NAME>_MCP=stdio` trigger diverts
-    # `main()`/`app()` into serving MCP tools over stdio instead of parsing
-    # argv or running any command -- no version text, no exit via argparse.
-    # Prove the opt-out disables that: a normal CLI run (`--version`) is
-    # identical whether or not AUTHKEYS_MCP is set.
-    monkeypatch.delenv("AUTHKEYS_MCP", raising=False)
-    with pytest.raises(SystemExit) as baseline:
-        run(["--version"])
-    baseline_out = capsys.readouterr().out
+def test_root_does_not_opt_out_of_mcp():
+    assert getattr(Authkeys, "_mcp_", True) is True
 
-    monkeypatch.setenv("AUTHKEYS_MCP", "stdio")
-    with pytest.raises(SystemExit) as with_env:
-        run(["--version"])
-    with_env_out = capsys.readouterr().out
 
-    assert with_env.value.code == baseline.value.code == 0
-    assert with_env_out == baseline_out
-    assert with_env_out.strip() != ""
-    # Never popped: `_mcp_ = False` returns before the trigger touches the
-    # environment at all, so a real MCP-aware child process downstream would
-    # still see whatever the caller set.
-    assert os.environ.get("AUTHKEYS_MCP") == "stdio"
+def _run(env_extra, stdin):
+    env = dict(os.environ)
+    env.pop("AUTHKEYS_MCP", None)
+    env.update(env_extra)
+    env["PYTHONPATH"] = SRC + os.pathsep + env.get("PYTHONPATH", "")
+    code = "import sys; from authkeys.cli import run; sys.argv[0] = 'authkeys'; sys.exit(run(sys.argv[1:]))"
+    return subprocess.run(
+        [sys.executable, "-c", code, "--version"],
+        input=stdin,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        env=env,
+        timeout=60,
+    )
+
+
+def test_authkeys_mcp_stdio_serves_mcp_tools():
+    msgs = [
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "t", "version": "0"}},
+        },
+        {"jsonrpc": "2.0", "method": "notifications/initialized"},
+        {"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
+    ]
+    proc = _run({"AUTHKEYS_MCP": "stdio"}, "".join(json.dumps(m) + "\n" for m in msgs))
+    replies = {}
+    for line in proc.stdout.splitlines():
+        msg = json.loads(line)
+        replies[msg.get("id")] = msg
+    assert replies[1]["result"]["serverInfo"]["name"] == "authkeys"
+    tools = {t["name"] for t in replies[2]["result"]["tools"]}
+    assert "authkeys.resolve" in tools
+
+
+def test_without_the_variable_it_is_a_normal_cli():
+    proc = _run({}, "")
+    assert proc.returncode == 0
+    assert proc.stdout.startswith("authkeys ")

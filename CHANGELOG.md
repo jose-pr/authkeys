@@ -6,6 +6,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+- **MCP is enabled.** With `AUTHKEYS_MCP=stdio` set, `authkeys` now serves
+  its commands (`resolve`, `check`, `serve`, `cache`, `completion`) as MCP
+  tools over stdio, which is duho's default launch trigger. 0.4.4 opted the
+  whole CLI out. These tools return real `authorized_keys` content, and
+  `serve` starts a listener, so only set the variable for an MCP client you
+  trust. Without the variable, the CLI behaves exactly as before.
+
 ## [0.4.4] - 2026-09-28
 
 Maintenance release: follows duho's 0.6.x ceiling bump and opts the CLI out
