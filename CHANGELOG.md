@@ -6,6 +6,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.4.5] - 2026-10-03
+
+Enables duho's MCP launch trigger, which 0.4.4 had turned off. No other change.
+
 ### Changed
 - **MCP is enabled.** With `AUTHKEYS_MCP=stdio` set, `authkeys` now serves
   its commands (`resolve`, `check`, `serve`, `cache`, `completion`) as MCP
