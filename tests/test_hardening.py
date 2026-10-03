@@ -1,4 +1,4 @@
-"""Regression + feature tests for the hardening / cache / quick-fix plans."""
+"""Regression and feature tests for resolver hardening, caching, and small fixes."""
 
 import ssl
 import threading
@@ -18,7 +18,7 @@ RSA = "ssh-rsa AAAAB3Nza"
 ED = "ssh-ed25519 AAAAC3Nza"
 
 
-# --- Hardening P1: LDAP tls_verify ----------------------------------------
+# --- LDAP tls_verify hardening ---------------------------------------------
 
 
 @pytest.mark.parametrize("value,expected_validate,ca_key", [
@@ -54,7 +54,7 @@ def test_ldap_tls_verify_file_vs_dir(tmp_path):
     assert kwargs2["ca_certs_path"] == str(tmp_path)
 
 
-# --- Hardening P3: malformed key line doesn't nuke the source -------------
+# --- Malformed key line doesn't nuke the source -----------------------------
 
 
 class MixedSource(AuthkeysSource):
@@ -102,7 +102,7 @@ def test_malformed_line_does_not_trigger_expired_fallback():
     assert keys == []
 
 
-# --- Hardening P2: lock not held across fetch -----------------------------
+# --- Lock not held across fetch ---------------------------------------------
 
 
 class BlockingSource(AuthkeysSource):
@@ -140,7 +140,7 @@ def test_lock_not_held_across_fetch():
     t.join(2)
 
 
-# --- Cache P1/P3: negative caching + error-empty ---------------------------
+# --- Negative caching + error-empty -----------------------------------------
 
 
 def test_negative_cache_uses_negative_ttl():
@@ -180,7 +180,7 @@ def test_http_error_falls_back_to_stale_not_cached_empty():
     assert [k.key for k in keys] == ["AAAAB3Nza"]  # stale served, not empty
 
 
-# --- Cache P4: per-source TTL ----------------------------------------------
+# --- Per-source TTL -----------------------------------------------------
 
 
 def test_per_source_expire_overrides_global():
@@ -200,7 +200,7 @@ def test_per_source_expire_overrides_global():
     assert auth.cache.get(("alice", "t"), ttl=auth.sources["t"].expire) is None
 
 
-# --- Cache P2: atomic writes + perms ---------------------------------------
+# --- Atomic writes + perms ---------------------------------------------
 
 
 def test_file_backend_atomic_and_private(tmp_path):
@@ -212,7 +212,7 @@ def test_file_backend_atomic_and_private(tmp_path):
     assert not list((tmp_path / "ldap").glob(".tmp-*"))
 
 
-# --- Cache P5: enumeration + sweep -----------------------------------------
+# --- Enumeration + sweep -------------------------------------------------
 
 
 def test_file_backend_keys_and_delete(tmp_path):
@@ -234,7 +234,7 @@ def test_sweep_by_max_entries(tmp_path):
     assert len(list(backend.keys())) == 2
 
 
-# --- Quick-fix P1: dedup by (type, key) ------------------------------------
+# --- Dedup by (type, key) -------------------------------------------------
 
 
 class KeyFromTwoSources(AuthkeysSource):
@@ -261,7 +261,7 @@ def test_dedup_across_sources_by_identity():
     assert len([k for k in keys if k.key == "AAAAB3Nza"]) == 1
 
 
-# --- Quick-fix P4: getlist fallback copy -----------------------------------
+# --- Getlist fallback copy -------------------------------------------------
 
 
 def test_getlist_fallback_is_copied():
