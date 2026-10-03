@@ -1,4 +1,4 @@
-"""Regression tests for the 2026-07-18 code-review findings (F1-F8)."""
+"""Regression tests for assorted security and correctness fixes."""
 
 import threading
 import time
@@ -14,7 +14,7 @@ from authkeys.sources.http import HttpAuthorizedKeys, _parse_verify
 RSA = "ssh-rsa AAAAB3Nza alice@host"
 
 
-# --- F1: LDAP filter injection --------------------------------------------
+# --- LDAP filter injection --------------------------------------------------
 
 
 def test_ldap_search_filter_escapes_username():
@@ -31,7 +31,7 @@ def test_ldap_search_filter_escapes_username():
     assert r"\2a" in flt.lower()
 
 
-# --- F2: HTTP username URL-encoding ---------------------------------------
+# --- HTTP username URL-encoding ----------------------------------------------
 
 
 class _FakeResp:
@@ -63,7 +63,7 @@ def test_http_username_is_url_encoded(monkeypatch):
     assert fake.url == "https://k.example/a%2Fb%3Fc%26d%23e"
 
 
-# --- F3: verify bool-or-path ----------------------------------------------
+# --- Verify bool-or-path -----------------------------------------------------
 
 
 @pytest.mark.parametrize("value,expected", [
@@ -84,7 +84,7 @@ def test_http_verify_false_disables_verification():
     assert src.options["verify"] is False
 
 
-# --- F4: api_key fail-closed ----------------------------------------------
+# --- api_key fail-closed ------------------------------------------------
 
 
 def _serve_argv(config_text, tmp_path):
@@ -104,7 +104,7 @@ def test_serve_fails_closed_on_empty_api_key(tmp_path, monkeypatch):
     assert "api_key" in str(exc.value)
 
 
-# --- F5: thread-safe cache (contract: correct + non-blocking, NOT fetch-dedup) -
+# --- Thread-safe cache (contract: correct + non-blocking, NOT fetch-dedup) ---
 
 
 class SlowCountingSource(AuthkeysSource):
@@ -156,7 +156,7 @@ def test_concurrent_resolution_is_correct_and_lock_not_held_across_fetch():
     assert SlowCountingSource.instances[0].calls == before  # cache hit, no new fetch
 
 
-# --- F6: serve honors per-user delegation ---------------------------------
+# --- Serve honors per-user delegation -----------------------------------
 
 
 class DelegationSource(AuthkeysSource):
@@ -193,7 +193,7 @@ def test_serve_resolves_delegated_users(tmp_path, monkeypatch):
     assert any("AAAAbob" in k for k in keys)  # delegation honored
 
 
-# --- F7: expire validation ------------------------------------------------
+# --- Expire validation --------------------------------------------------
 
 
 def test_invalid_expire_keeps_cache_at_default():
@@ -206,7 +206,7 @@ def test_invalid_expire_keeps_cache_at_default():
     assert auth.cache.ttl == 300
 
 
-# --- F8: default-command insertion ----------------------------------------
+# --- Default-command insertion -------------------------------------------
 
 
 @pytest.mark.parametrize("argv,expected", [
