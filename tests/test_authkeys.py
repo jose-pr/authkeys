@@ -66,7 +66,7 @@ def test_parse_all_skips_blank_and_comment_lines():
     assert [k.key for k in keys] == ["AAAAB3Nza", "AAAAC3Nza"]
 
 
-# --- Options-prefixed lines (D1) -------------------------------------------
+# --- Options-prefixed lines --------------------------------------------
 
 
 def test_parse_options_prefix_round_trips_byte_for_byte():
@@ -311,7 +311,7 @@ def test_source_error_falls_back_to_expired_cache():
     assert [k.key for k in keys] == ["AAAAB3Nza"]
 
 
-# --- Source dataclass (D4) --------------------------------------------------
+# --- Source dataclass ----------------------------------------------------
 
 
 def test_source_is_a_dataclass_with_expected_fields():
