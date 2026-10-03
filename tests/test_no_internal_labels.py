@@ -103,17 +103,18 @@ def _scan_text(text: str):
 def _git_tracked_files():
     try:
         result = subprocess.run(
-            ["git", "ls-files"],
+            ["git", "ls-files", "-z"],
             cwd=_REPO_ROOT,
             capture_output=True,
-            text=True,
             timeout=30,
         )
     except (OSError, subprocess.SubprocessError):
         return None
     if result.returncode != 0:
         return None
-    return [line for line in result.stdout.splitlines() if line]
+    # NUL-separated (-z): plain output C-quotes and octal-escapes any path
+    # with a non-ASCII byte, which then cannot be opened.
+    return [p for p in result.stdout.decode("utf-8").split("\0") if p]
 
 
 def test_no_internal_labels_in_tracked_files():
