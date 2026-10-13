@@ -6,6 +6,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+- **The `duho` requirement moves to its 0.7.x series: `>=0.7.0,<0.8.0`** (was
+  `>=0.6.0,<0.7.0`). Ceiling-following bump: the duho surface authkeys imports
+  is unchanged. The full test suite passes against the installed `duho==0.7.3`
+  wheel on Python 3.9 and 3.14.
+
 ## [0.4.5] - 2026-10-03
 
 Enables duho's MCP launch trigger, which 0.4.4 had turned off. No other change.
