@@ -6,9 +6,11 @@ server. ``resolve`` is also the default command when none is given.
 """
 
 import json
+import logging
 import typing as _ty
 
-from duho import AUTO, Arg, Args, Choice, Cli, Cmd, LoggingArgs, app, main, print_completion
+from duho import AUTO, Arg, Args, Choice, Cli, Cmd, CommandError, LoggingArgs, print_completion
+from duho import run as _duho_run
 
 from . import AuthKeys, AuthorizedKey, config, utils
 from .config import AuthkeysConfig
@@ -221,8 +223,7 @@ class Cache(LoggingArgs, Cmd):
         cfg = self.config_paths or _default_config_paths()
         auth = _build(cfg)
         if auth.cache is None:
-            self._logger_.error("No cache configured")
-            return 3
+            raise CommandError("No cache configured", 3)
         backend = auth.cache.backend
         try:
             if self.action == "show":
@@ -256,13 +257,12 @@ class Cache(LoggingArgs, Cmd):
                     self._logger_.info(f"Warmed {username}: {len(keys)} key(s)")
                 return 0
         except NotImplementedError:
-            self._logger_.error(
+            raise CommandError(
                 "The configured cache backend does not support this action "
-                "(in-memory caches are per-process)."
-            )
-            return 3
-        self._logger_.error(f"Unknown cache action: {self.action}")
-        return 2
+                "(in-memory caches are per-process).",
+                3,
+            ) from None
+        raise CommandError(f"Unknown cache action: {self.action}", 2)
 
 
 class Completion(Cmd):
@@ -284,6 +284,12 @@ class Completion(Cmd):
         return 0
 
 
+def _report_error(message: str, code: int) -> None:
+    # Same record `cache` logged before it raised CommandError: logger
+    # `authkeys`, ERROR, the bare message, no traceback.
+    logging.getLogger("authkeys").error(message)
+
+
 class Authkeys(LoggingArgs, Cli):
     """Pluggable AuthorizedKeysCommand provider for OpenSSH."""
 
@@ -291,6 +297,7 @@ class Authkeys(LoggingArgs, Cli):
     _version_ = AUTO
     _distribution_ = "authkeys"
     _subcommands_ = [Resolve, Serve, Cache, Check, Completion]
+    _report_error_ = staticmethod(_report_error)
 
 
 _COMMANDS = {"resolve", "keys", "serve", "cache", "check", "completion"}
@@ -318,10 +325,10 @@ def _with_default_command(argv: "_ty.Sequence[str]") -> "list[str]":
     return ["resolve"] + argv
 
 
-def run(argv: "_ty.Sequence[str] | None" = None) -> "int | None":
+def run(argv: "_ty.Sequence[str] | None" = None) -> int:
     import sys
 
     if argv is None:
         argv = sys.argv[1:]
-    return app(Authkeys, argv=_with_default_command(argv))
+    return _duho_run(Authkeys, _with_default_command(argv), exit=False)
 

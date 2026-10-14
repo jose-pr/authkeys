@@ -95,13 +95,13 @@ def _serve_argv(config_text, tmp_path):
     return run(["serve", "--config", str(p), "--port", "0"])
 
 
-def test_serve_fails_closed_on_empty_api_key(tmp_path, monkeypatch):
+def test_serve_fails_closed_on_empty_api_key(tmp_path, monkeypatch, capsys):
     monkeypatch.delenv("AUTHKEYS_TEST_KEY", raising=False)
-    with pytest.raises(SystemExit) as exc:
-        _serve_argv(
-            "[serve]\napi_key = ${env:AUTHKEYS_TEST_KEY}\n", tmp_path
-        )
-    assert "api_key" in str(exc.value)
+    rc = _serve_argv("[serve]\napi_key = ${env:AUTHKEYS_TEST_KEY}\n", tmp_path)
+    captured = capsys.readouterr()
+    assert rc == 1
+    assert captured.out == ""
+    assert "'api_key' is configured" in captured.err
 
 
 # --- Thread-safe cache (contract: correct + non-blocking, NOT fetch-dedup) ---

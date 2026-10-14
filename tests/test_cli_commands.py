@@ -160,3 +160,44 @@ def test_check_format_json(tmp_path, monkeypatch, capsys):
     assert rc == 0
     parsed = json.loads(out)
     assert parsed == [{"type": "ssh-rsa", "key": "AAAAB3Nza", "comment": "a", "options": ""}]
+
+
+def test_cache_without_cache_configured_logs_and_exits_3(tmp_path, caplog, capsys):
+    conf = tmp_path / "authkeys.conf"
+    conf.write_text("[cache]\nbackend = authkeys.cache.AuthKeysCacheFileBackend\n")
+    with caplog.at_level("ERROR", logger="authkeys"):
+        rc = run(["cache", "show", "--config", str(conf)])
+    assert rc == 3
+    last = [r for r in caplog.records if r.name == "authkeys"][-1]
+    assert (last.levelname, last.getMessage()) == ("ERROR", "No cache configured")
+    assert last.exc_info is None
+    assert capsys.readouterr().out == ""
+
+
+def test_cache_unknown_action_logs_and_exits_2(tmp_path, caplog):
+    cachedir = tmp_path / "cache"
+    cachedir.mkdir()
+    conf = tmp_path / "authkeys.conf"
+    conf.write_text(
+        "[cache]\n"
+        "backend = authkeys.cache.AuthKeysCacheFileBackend\n"
+        f"path = {cachedir}\n"
+    )
+    with caplog.at_level("ERROR", logger="authkeys"):
+        rc = run(["cache", "bogus", "--config", str(conf)])
+    assert rc == 2
+    assert [r.getMessage() for r in caplog.records if r.name == "authkeys"] == [
+        "Unknown cache action: bogus"
+    ]
+
+
+def test_cache_unsupported_backend_action_logs_and_exits_3(tmp_path, caplog):
+    conf = tmp_path / "authkeys.conf"
+    conf.write_text("[cache]\nbackend = authkeys.cache.AuthKeysCacheBackend\n")
+    with caplog.at_level("ERROR", logger="authkeys"):
+        rc = run(["cache", "show", "--config", str(conf)])
+    assert rc == 3
+    assert [r.getMessage() for r in caplog.records if r.name == "authkeys"][-1] == (
+        "The configured cache backend does not support this action "
+        "(in-memory caches are per-process)."
+    )
