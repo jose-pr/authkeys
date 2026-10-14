@@ -157,8 +157,9 @@ section; each is also importable directly as its real class.
 Built on `duho`; see that project's own package header for the `Cli`/`Cmd`
 model this builds on.
 
-- **`run(argv: Sequence[str] | None = None) -> int | None`** — the console
-  script entry point. Inserts the default `resolve` subcommand when `argv`
+- **`run(argv: Sequence[str] | None = None) -> int`** — the console
+  script entry point; `duho.run(Authkeys, ..., exit=False)`, so it returns the
+  status (a `SystemExit` becomes its status, Ctrl-C is `130`). Inserts the default `resolve` subcommand when `argv`
   names none (so `authkeys %u` behaves like `authkeys resolve %u`), unless
   `-h`/`--help`/`--version` is present or a bare `--` precedes every token.
 - **`Authkeys`** — the CLI root; subcommands `resolve` (alias `keys`),
@@ -173,15 +174,17 @@ model this builds on.
   reaches stderr.
 - **`serve`** — builds the HTTP server from `[serve]` config
   (`bind`/`port`/`path`/`api_key`/`max_usernames`) or CLI
-  `--bind`/`--port` overrides, then blocks until interrupted. Exits with an
-  error if `[serve] api_key` is present but resolves to an empty string
+  `--bind`/`--port` overrides, then blocks until interrupted. Exits `1`,
+  with the message on stderr, if `[serve] api_key` is present but resolves to an empty string
   (fail closed rather than starting unauthenticated by surprise).
 - **`cache`** — `action` positional, one of `show` (list each entry with its
   age), `purge` (`--expired` sweeps by TTL, `--all` clears everything, else
   filter by `--user`/`--source`), `warm` (positional `users` or `--user`,
   pre-resolves into the cache). Exits `3` if no cache is configured, or if
   the backend doesn't support the requested action (e.g. enumeration on a
-  backend that can't list its entries).
+  backend that can't list its entries), and `2` for an unknown action. These
+  are `CommandError`s reported by the root's `_report_error_` as one `ERROR`
+  record on the `authkeys` logger, with no `authkeys: error:` line.
 - **`completion`** — prints a shell completion script for `--shell
   {bash,zsh,fish}`.
 

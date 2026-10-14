@@ -7,10 +7,21 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Changed
-- **The `duho` requirement moves to its 0.7.x series: `>=0.7.0,<0.8.0`** (was
-  `>=0.6.0,<0.7.0`). Ceiling-following bump: the duho surface authkeys imports
-  is unchanged. The full test suite passes against the installed `duho==0.7.3`
-  wheel on Python 3.9 and 3.14.
+- **The `duho` requirement moves to its 0.7.x series: `>=0.7.4,<0.8.0`** (was
+  `>=0.6.0,<0.7.0`). The floor is 0.7.4 because the entry now uses
+  `duho.run(..., exit=False)` and the root's `_report_error_`, both added in
+  that patch.
+- The `authkeys` entry (`authkeys.cli.run`, the console script) goes through
+  `duho.run(..., exit=False)` and always returns an `int`. Exit statuses and
+  output are unchanged, with three differences: Ctrl-C outside `resolve`,
+  `check` and `serve` (which handle it themselves) ends with status 130 and no
+  traceback; a broken pipe there ends with status 1, quietly; and `serve`'s
+  refusal to start without a usable `api_key` is returned as status 1 with the
+  same message on stderr instead of raised as `SystemExit`.
+- `authkeys cache` reports "No cache configured", an unsupported backend action
+  and an unknown action as `CommandError`s (statuses 3, 3 and 2). The log record
+  is the same: logger `authkeys`, level `ERROR`, the same message. With
+  `DUHO_TRACEBACK` set the error is now raised instead of logged.
 
 ## [0.4.5] - 2026-10-03
 
