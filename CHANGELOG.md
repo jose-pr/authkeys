@@ -56,6 +56,26 @@ API. A configuration written for 0.4 does not load: convert it as below.
   certificate or a token, a redirect is an error instead of being followed (it
   would carry the credential to another host). Error messages name the URL
   without its query string.
+- **The ldap source is rewritten.** It uses python-ldap when installed (as many
+  distributions and appliances ship it) and ldap3 otherwise (`client`), and it
+  authenticates: `auth = "gssapi"` (the default) binds with the host's machine
+  Kerberos credentials, sealing the session, which also makes `ldap://` on port
+  389 work against an Active Directory that requires signing; `simple`
+  (`bind_dn`, `password_env`), `external` (client certificate) and `anonymous`
+  are the others. Before, every bind was anonymous, so a directory that refuses
+  anonymous reads (Active Directory) returned nothing. **A configuration that
+  relied on the anonymous bind must now say `auth = "anonymous"`.**
+- The ldap source reads the certificate attribute under any options and case
+  (`userCertificate;binary`, as OpenLDAP returns it); before, OpenLDAP entries
+  gave no keys. `tls_cert`/`tls_key` no longer default to the host's server
+  certificate and key, and the files need not exist unless used; `starttls`
+  enables StartTLS on `ldap://`; `issuer_ca` keeps only certificates its CA
+  issued; the key comment no longer contains spaces. With ldap3 the TLS context
+  is an `SSLContext` built with sslcontext (host-name checking on), or the one
+  given to `LDAPSource(..., ssl_context=...)`.
+- The `ldap` extra requires `ldap3>=2.10.2rc4,<2.11` (signed and sealed SASL)
+  and `cryptography>=40.0.0,<51`; the new `kerberos` extra adds gssapi (POSIX)
+  or winkerberos (Windows) for Kerberos through ldap3.
 - `completion` needs the shell (`bash`, `zsh`, `fish`, or the new `powershell`).
 - `cache` gains `purge --dry-run` (`-n`); an unknown action is a usage error.
 - The console script calls `authkeys.cli:main` (was `authkeys.cli:run`).
@@ -96,6 +116,7 @@ API. A configuration written for 0.4 does not load: convert it as below.
 | `expire = 3600` | `expire = 3600` (a number, unquoted) |
 | `api_key = ${env:AUTHKEYS_APIKEY}` | `api_key = "${env.AUTHKEYS_APIKEY}"` |
 | `[serve] bind = 0.0.0.0` and `port = 8090` | `[serve] listen = "0.0.0.0:8090"` |
+| `[source:ldap]` with no credentials (anonymous) | `[source.ldap]` with `auth = "anonymous"` (the default is now `"gssapi"`) |
 | `authkeys serve --bind H --port P` | `authkeys serve --listen H:P` |
 | `[source:http] address = https://...` | `[source.http] url = "https://..."` |
 | `credentials = cert.pem,key.pem` | `certificate = "cert.pem"` and `key = "key.pem"` |

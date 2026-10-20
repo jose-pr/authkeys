@@ -101,38 +101,91 @@ server = "ldaps://ldap.example.com:636"
 basedn = "o=Example,c=US"
 username_attr = "uid"
 cert_attr = "userCertificate"
-tls_verify = "system"
+auth = "anonymous"          # or "gssapi" (default), "simple", "external"
+tls_verify = "/etc/pki/tls/certs/ca.pem"
 # cert_filter = "authkeys.sources.only_auth_keys"   # the default; "none" disables it
+# issuer_ca = "/etc/pki/tls/certs/user-ca.pem"      # keep only certs this CA issued
 ```
 
-Each matching entry's certificate is parsed and its public key serialized to
-OpenSSH format. The username is escaped before it goes into the LDAP filter, so a
-crafted username cannot inject additional filter clauses.
+The one entry whose `username_attr` equals the username is read, and each
+certificate in its `cert_attr` becomes an OpenSSH key. The username is escaped
+before it goes into the search filter, so a crafted username cannot inject
+filter clauses. A refused bind or search is an error (so `expired_on_error`
+applies), so is a search matching more than one entry, and referrals are ignored.
 
-`server` must be an `ldaps://` URL or a bare host name; `ldap://` is refused,
-because it would send the search in clear text. A search the server refuses (no
-bind, missing rights) is an error, so `expired_on_error` applies to it, and a
-search that matches more than one entry is an error too; referrals in the answer
-are ignored.
+### Clients
+
+Two LDAP libraries can do the work, chosen by `client`:
+
+- `auto` (default) uses **python-ldap** when it is installed — many distributions
+  and appliances ship it, so nothing needs installing — and **ldap3** otherwise;
+- `python-ldap` or `ldap3` to choose.
+
+`pip install authkeys[ldap]` installs ldap3 (2.10.2rc4 or later) and
+cryptography. Kerberos through ldap3 also needs `authkeys[kerberos]` (gssapi on
+POSIX, which builds against the system's krb5; winkerberos on Windows);
+python-ldap uses the system's Cyrus SASL GSSAPI module.
+
+### Authentication
+
+| `auth` | How | Needs |
+| --- | --- | --- |
+| `gssapi` (default) | Kerberos with the host's machine credentials | a joined host's keytab (`keytab`, default `/etc/krb5.keytab`) |
+| `simple` | `bind_dn` with the password in the variable `password_env` | TLS |
+| `external` | SASL EXTERNAL: the client certificate is the identity | `tls_cert`, `tls_key` |
+| `anonymous` | no bind | a directory that allows anonymous reads |
+
+With `gssapi` the session is sealed by Kerberos (security strength 56 or more),
+so `ldap://` on port 389 is accepted; any other `auth` over `ldap://` needs
+`starttls = true`. `principal` chooses another keytab entry (ldap3 on POSIX only;
+python-ldap uses the keytab's first entry, the computer account). On Windows the
+ldap3 client uses the credentials of the process: run as SYSTEM for the computer
+account.
+
+The host keytab is readable by root only. When authkeys runs as another account
+(an `AuthorizedKeysCommandUser`), give that account the machine credentials
+through [gssproxy](https://github.com/gssapi/gssproxy) rather than loosening the
+keytab: authkeys then leaves `KRB5_CLIENT_KTNAME` alone and Kerberos asks
+gssproxy.
+
+### Active Directory
+
+```toml
+[source.ad]
+backend = "ldap"
+server = "ldap://dc1.example.com"     # sealed Kerberos on 389
+basedn = "DC=example,DC=com"
+username_attr = "sAMAccountName"
+# auth = "gssapi"                     # the default: the computer account
+```
+
+AD requires signed binds on port 389, which a sealed Kerberos session satisfies;
+it works without a domain-controller certificate. LDAPS (`ldaps://`, or
+`external` with a client certificate) needs the DC to have a certificate. AD's
+`userCertificate` also holds encryption and recovery certificates; the default
+filter keeps only the ones made for client authentication.
+
+### TLS and certificates
+
+| `tls_verify` | Behavior |
+| --- | --- |
+| unset / `system` | verify against the platform's trust store (default) |
+| a file path | verify against that CA bundle |
+| a directory path | verify against that CA directory |
+| `none` | **do not verify** — insecure, testing only (logs a warning) |
+
+`tls_cert`/`tls_key` are the *client* certificate (for `external`, or a server
+that asks for one). With ldap3 the connection uses a Python `SSLContext` — one
+authkeys builds with [sslcontext](https://github.com/jose-pr/sslcontext), or
+yours when you build `LDAPSource(..., ssl_context=...)` in code — with host-name
+checking on; python-ldap configures libldap's OpenSSL instead and cannot take an
+`SSLContext`. `timeout` (seconds) bounds a hung server.
 
 `cert_filter` is a callable `(username, cert) -> bool | str` that drops a
 certificate (`False`) or supplies its comment (a string). The default,
 `authkeys.sources.only_auth_keys`, keeps a certificate only when it is within
 its validity period, is not self-signed, its KeyUsage (if present) allows digital
 signature, and its ExtendedKeyUsage (if present) includes clientAuth or
-anyExtendedKeyUsage: directories keep encryption, e-mail and recovery
-certificates in the same attribute. `cert_filter = none` keeps every certificate.
-
-!!! warning "Server-certificate verification"
-    The LDAPS channel decides who is allowed to log in, so authkeys **verifies the
-    server certificate by default**. `tls_verify` controls it:
-
-    | `tls_verify` | Behavior |
-    | --- | --- |
-    | unset / `system` | Verify against the OS trust store (default) |
-    | a file path | Verify against that CA bundle |
-    | a directory path | Verify against that CA directory |
-    | `none` | **Do not verify** — insecure, testing only (logs a warning) |
-
-    `tls_cert`/`tls_key` are the *client* mutual-TLS credentials, not server
-    verification. `timeout` (seconds) bounds a hung server.
+anyExtendedKeyUsage. `cert_filter = "none"` keeps every certificate.
+`issuer_ca` (a PEM file of one or more CA certificates) additionally keeps only
+the certificates one of them issued.

@@ -90,7 +90,7 @@ basedn = "o=Example,c=US"
 | `file`    | `~/.ssh/authorized_keys*` files              | —     |
 | `http`    | an HTTP URL (`{username}` templated)         | `authkeys[http]` |
 | `github`  | a GitHub (or similar) `.keys` endpoint       | `authkeys[http]` |
-| `ldap`    | X.509 certs in an LDAP directory             | `authkeys[ldap]` |
+| `ldap`    | X.509 certs in an LDAP directory (Kerberos with the machine account by default; python-ldap or ldap3) | `authkeys[ldap]`, or a system python-ldap |
 
 Each `[source.<name>]` table supports `enabled` and `cached` (both default
 `true`) and an optional `sanitize` callable to rewrite or drop keys. Other
