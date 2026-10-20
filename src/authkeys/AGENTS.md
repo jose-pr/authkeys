@@ -207,18 +207,40 @@ built.
   variable whose value is sent as `Authorization: Bearer`). A reply over 8 MiB
   is an error; with a certificate or token, a redirect is an error rather than
   followed. Programmatic `ssl_context=` replaces the TLS options. Both need `authkeys[http]` (syshttp).
-- **`ldap`** — **`LDAPSource`**: an LDAPS search (`server`: `ldaps://...` or a
-  bare host, `ldap://` raises `ConfigError`; `basedn`; `username_attr`, default
-  `uid`) for `cert_attr` (default `userCertificate`) X.509 certs, serialized to
-  OpenSSH keys. `tls_cert`/`tls_key` are the client mTLS credentials;
-  `tls_verify`: `none` (insecure, warns), `system`/unset (OS trust store), or a
-  CA file/directory. The username is filter-escaped. A refused search (result
-  other than 0/32) or more than one matching entry raises `SourceError`;
-  referrals are ignored. `cert_filter` (dotted path; `none` disables) — default
-  **`only_auth_keys(username, cert) -> bool`**: keeps a cert within its validity
-  period, not self-signed, KeyUsage (if present) with digitalSignature, EKU (if
-  present) with clientAuth or anyExtendedKeyUsage. Needs `ldap3` +
-  `cryptography` (`authkeys[ldap]`).
+- **`ldap`** — **`LDAPSource(options, globals, *, ssl_context=None)`**: reads the
+  one entry whose `username_attr` (default `uid`; Active Directory:
+  `sAMAccountName`) equals the username (escaped per RFC 4515) under `basedn`,
+  and turns each value of `cert_attr` (default `userCertificate`, any attribute
+  options and case) into an OpenSSH key, comment `user(subject)` without spaces.
+  - `server`: `ldaps://host[:port]` or a bare host (LDAPS), or `ldap://` only
+    with `starttls = true` or `auth = "gssapi"` (a sealed session); otherwise
+    `ConfigError`.
+  - `client`: `auto` (default: python-ldap when it imports and neither
+    `ssl_context` nor `principal` asks for ldap3; else ldap3), `python-ldap`,
+    `ldap3` (2.10.2rc4+). Neither available: `ConfigError` naming `authkeys[ldap]`.
+  - `auth`: `gssapi` (default: Kerberos with the host's machine credentials —
+    `keytab`, default `/etc/krb5.keytab`, exported as `KRB5_CLIENT_KTNAME` when
+    unset and readable; the session sealed (SSF ≥ 56) unless TLS already
+    protects it; `principal` picks a keytab entry, ldap3 on POSIX only; on
+    Windows ldap3 uses the process's own credentials), `simple` (`bind_dn` and
+    `password_env`, the variable holding the password; needs TLS), `external`
+    (SASL EXTERNAL with `tls_cert`/`tls_key`), `anonymous`.
+  - TLS: `tls_verify` (`system`/unset: the platform store; a CA file or
+    directory; `none`: no verification, warns), `tls_cert`/`tls_key` (client
+    certificate). ldap3 wraps the socket with an `SSLContext` (the caller's
+    `ssl_context`, else one from sslcontext) with host-name checking on;
+    python-ldap uses libldap's OpenSSL options and refuses an `ssl_context`.
+  - Results: a refused bind or search (result other than 0/32) or more than one
+    matching entry raises `SourceError`; referrals are ignored, not followed.
+  - `cert_filter` (dotted path; `none` disables) — default
+    **`only_auth_keys(username, cert) -> bool`**: keeps a cert within its
+    validity period, not self-signed, KeyUsage (if present) with
+    digitalSignature, EKU (if present) with clientAuth or anyExtendedKeyUsage.
+    `issuer_ca` (a PEM file) also keeps only certificates directly issued by one
+    of its certificates.
+  - Needs `authkeys[ldap]` (ldap3, cryptography) or python-ldap plus
+    cryptography; Kerberos through ldap3 also needs `authkeys[kerberos]`
+    (gssapi on POSIX, winkerberos on Windows).
 - **`register_source(name, cls) -> cls`** (a name taken by another class is a
   `ValueError`), **`source_names() -> tuple[str, ...]`**, **`get_source(name)
   -> type`** (`ConfigError` listing the names). Plugins: entry-point group
@@ -312,6 +334,8 @@ Built on duho (`ConfigArgs` root, `_default_subcommand_ = "resolve"`,
 | `AUTHKEYS_CONFIG` | the configuration file (empty: none) | `/etc/authkeys.cfg` |
 | `AUTHKEYS_SERVE_LISTEN`, `_CERTIFICATE`, `_KEY`, `_PATH`, `_MAX_USERNAMES`, `_REQUEST_TIMEOUT`, `_MAX_CONNECTIONS` | the `serve` options of the same name | the `[serve]` table, else the option's default |
 | `AUTHKEYS_MCP` | `stdio` serves the commands as MCP tools (duho) | unset |
+| the ldap source's `password_env` | the simple-bind password (**secret**) | none |
+| `KRB5_CLIENT_KTNAME` | the keytab Kerberos reads; the ldap source sets it to `keytab` when unset | `/etc/krb5.keytab` via `keytab` |
 | the http/github source's `token_env` | that source's bearer token (**secret**) | none |
 | `HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY`, `CA_BUNDLE`, `SYSHTTP_*` | read by syshttp for the http/github sources when `proxy`/`verify` are unset | the system's configuration |
 | any name in `${env.NAME}` | that value in the system configuration (often a **secret**: `api_key`) | empty |

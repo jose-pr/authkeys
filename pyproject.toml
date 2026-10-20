@@ -36,7 +36,15 @@ dependencies = [
 
 [project.optional-dependencies]
 http = ["syshttp>=0.1.0,<0.2"]
-ldap = ["ldap3", "cryptography"]
+# ldap3 2.10.2rc4 adds session_security (signed/sealed Kerberos binds); python-ldap
+# is used instead when installed. cryptography 40.0 has every certificate API used.
+ldap = ["ldap3>=2.10.2rc4,<2.11", "cryptography>=40.0.0,<51"]
+# Kerberos for the ldap3 client (python-ldap uses the system's Cyrus SASL instead).
+# gssapi builds against the system's krb5 where no wheel exists, so it is not in all.
+kerberos = [
+    "gssapi>=1.7,<2; sys_platform != 'win32'",
+    "winkerberos>=0.12,<0.14; sys_platform == 'win32'",
+]
 all = ["authkeys[http,ldap]"]
 dev = ["black", "build", "hatchling", "pytest", "pytest-cov", "pytest-timeout", "pyyaml", "twine"]
 docs = ["mkdocs", "mkdocs-material", "mkdocstrings[python]"]

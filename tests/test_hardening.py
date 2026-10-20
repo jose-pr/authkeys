@@ -7,7 +7,7 @@ import time
 import pytest
 
 from authkeys import AuthKeys, KeySource, Settings
-from authkeys.sources import LDAPSource, register_source
+from authkeys.sources import register_source
 from authkeys.cache import (
     _NEGATIVE_MARKER,
     AuthKeysCache,
@@ -22,32 +22,64 @@ ED = "ssh-ed25519 AAAAC3Nza"
 # --- LDAP tls_verify hardening ---------------------------------------------
 
 
+def _settings(**changes):
+    from authkeys.sources._ldapclients import LDAPSettings
+
+    values = dict(
+        url="ldaps://dc",
+        starttls=False,
+        basedn="",
+        attribute="userCertificate",
+        auth="anonymous",
+        keytab=None,
+        principal=None,
+        bind_dn=None,
+        password_env=None,
+        tls_verify=None,
+        tls_cert=None,
+        tls_key=None,
+        timeout=1.0,
+    )
+    values.update(changes)
+    return LDAPSettings(**values)
+
+
 @pytest.mark.parametrize(
-    "value,expected_validate,ca_key",
-    [
-        (None, ssl.CERT_REQUIRED, None),
-        ("system", ssl.CERT_REQUIRED, None),
-        ("none", ssl.CERT_NONE, None),
-    ],
+    "value,expected",
+    [(None, ssl.CERT_REQUIRED), ("system", ssl.CERT_REQUIRED), ("none", ssl.CERT_NONE)],
 )
-def test_ldap_tls_verify_modes(value, expected_validate, ca_key):
-    pytest.importorskip("ldap3")
-    src = LDAPSource({} if value is None else {"tls_verify": value}, {})
-    kwargs = src._tls_kwargs()
-    assert kwargs["validate"] == expected_validate
-    assert "ca_certs_file" not in kwargs and "ca_certs_path" not in kwargs
+def test_ldap_tls_verify_modes(value, expected):
+    from authkeys.sources._ldapclients import tls_context
+
+    context = tls_context(_settings(tls_verify=value))
+    assert context.verify_mode == expected
+    assert context.check_hostname is (expected == ssl.CERT_REQUIRED)
 
 
-def test_ldap_tls_verify_file_vs_dir(tmp_path):
-    pytest.importorskip("ldap3")
+def test_ldap_tls_verify_file_vs_dir(tmp_path, monkeypatch):
+    import sslcontext
+
+    from authkeys.sources._ldapclients import tls_context
+
+    seen = []
+    monkeypatch.setattr(sslcontext, "create_context", lambda **kw: seen.append(kw))
     ca = tmp_path / "ca.pem"
     ca.write_text("x")
-    kwargs = LDAPSource({"tls_verify": str(ca)}, {})._tls_kwargs()
-    assert kwargs["validate"] == ssl.CERT_REQUIRED
-    assert kwargs["ca_certs_file"] == str(ca)
+    tls_context(_settings(tls_verify=str(ca)))
+    tls_context(_settings(tls_verify=str(tmp_path)))
+    tls_context(_settings(tls_cert="c.pem", tls_key="k.pem"))
+    assert seen == [
+        {"cafile": str(ca)},
+        {"capath": str(tmp_path)},
+        {"certificate": "c.pem", "key": "k.pem"},
+    ]
 
-    kwargs2 = LDAPSource({"tls_verify": str(tmp_path)}, {})._tls_kwargs()
-    assert kwargs2["ca_certs_path"] == str(tmp_path)
+
+def test_a_given_ssl_context_is_used_as_is():
+    from authkeys.sources._ldapclients import tls_context
+
+    context = ssl.create_default_context()
+    assert tls_context(_settings(ssl_context=context)) is context
 
 
 # --- Malformed key line doesn't nuke the source -----------------------------

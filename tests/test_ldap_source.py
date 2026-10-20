@@ -2,6 +2,7 @@
 scheme, and the default certificate filter (with real certificates)."""
 
 import datetime
+import os
 
 import pytest
 
@@ -19,6 +20,17 @@ from authkeys.sources import LDAPSource, only_auth_keys  # noqa: E402
 NOW = datetime.datetime.now(datetime.timezone.utc)
 CA_KEY = ec.generate_private_key(ec.SECP256R1())
 CA_NAME = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "Test CA")])
+CA_CERT = (
+    x509.CertificateBuilder()
+    .subject_name(CA_NAME)
+    .issuer_name(CA_NAME)
+    .public_key(CA_KEY.public_key())
+    .serial_number(1)
+    .not_valid_before(NOW - datetime.timedelta(days=30))
+    .not_valid_after(NOW + datetime.timedelta(days=30))
+    .add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True)
+    .sign(CA_KEY, hashes.SHA256())
+)
 
 
 def _cert(*, self_signed=False, key_usage=None, eku=None, expired=False):
@@ -85,8 +97,18 @@ class FakeConnection:
     response = []
 
     def __init__(self, *args, **kwargs):
+        FakeConnection.options = kwargs
         self.result = dict(FakeConnection.answer)
         self.response = list(FakeConnection.response)
+
+    def open(self):
+        pass
+
+    def start_tls(self):
+        return True
+
+    def bind(self):
+        return True
 
     def search(self, *args, **kwargs):
         return self.result["result"] == 0 and any(
@@ -109,18 +131,19 @@ def _entry(*certs):
     }
 
 
-@pytest.fixture
-def source(tmp_path, monkeypatch):
-    for name in ("cert.pem", "key.pem"):
-        (tmp_path / name).write_text("x")
+def _fake_ldap3(monkeypatch):
     monkeypatch.setattr(ldap3, "Connection", FakeConnection)
     monkeypatch.setattr(ldap3, "Server", lambda *a, **k: object())
-    monkeypatch.setattr(ldap3, "Tls", lambda *a, **k: object())
+
+
+@pytest.fixture
+def source(monkeypatch):
+    _fake_ldap3(monkeypatch)
     options = {
         "server": "ldaps://dc.example",
         "basedn": "dc=example",
-        "tls_cert": str(tmp_path / "cert.pem"),
-        "tls_key": str(tmp_path / "key.pem"),
+        "client": "ldap3",
+        "auth": "anonymous",
     }
     return LDAPSource(options, {})
 
@@ -164,14 +187,32 @@ def test_ambiguous_match_raises(source, monkeypatch):
         list(source.authorized_keys("alice"))
 
 
-def test_cert_filter_none_keeps_every_certificate(source, monkeypatch, tmp_path):
-    options = {
-        "server": "dc.example",
-        "cert_filter": "none",
-        "tls_cert": str(tmp_path / "cert.pem"),
-        "tls_key": str(tmp_path / "key.pem"),
+def test_attribute_options_and_case_are_matched(source, monkeypatch):
+    # OpenLDAP answers with "userCertificate;binary", and ldap3 also returns the
+    # plain name, empty.
+    der = _cert(eku=[ExtendedKeyUsageOID.CLIENT_AUTH]).public_bytes(
+        serialization.Encoding.DER
+    )
+    entry = {
+        "type": "searchResEntry",
+        "dn": "uid=alice",
+        "raw_attributes": {"usercertificate;binary": [der], "userCertificate": []},
     }
-    src = LDAPSource(options, {})
+    _answer(monkeypatch, {"result": 0, "description": "success"}, [entry])
+    assert len(list(source.authorized_keys("alice"))) == 1
+
+
+def test_cert_filter_none_keeps_every_certificate(monkeypatch):
+    _fake_ldap3(monkeypatch)
+    src = LDAPSource(
+        {
+            "server": "dc.example",
+            "client": "ldap3",
+            "auth": "anonymous",
+            "cert_filter": "none",
+        },
+        {},
+    )
     _answer(
         monkeypatch,
         {"result": 0, "description": "success"},
@@ -180,11 +221,108 @@ def test_cert_filter_none_keeps_every_certificate(source, monkeypatch, tmp_path)
     assert len(list(src.authorized_keys("alice"))) == 1
 
 
-@pytest.mark.parametrize("server", ["ldap://dc.example", "LDAP://dc.example:389"])
-def test_plain_ldap_url_is_refused(server):
-    options = {"server": server}
-    with pytest.raises(ConfigError, match="ldaps://"):
+def test_issuer_ca_keeps_only_certificates_it_issued(monkeypatch, tmp_path):
+    _fake_ldap3(monkeypatch)
+    ca_file = tmp_path / "ca.pem"
+    ca_file.write_bytes(CA_CERT.public_bytes(serialization.Encoding.PEM))
+    src = LDAPSource(
+        {
+            "server": "dc.example",
+            "client": "ldap3",
+            "auth": "anonymous",
+            "cert_filter": "none",
+            "issuer_ca": str(ca_file),
+        },
+        {},
+    )
+    issued, foreign = _cert(), _cert(self_signed=True)
+    _answer(
+        monkeypatch, {"result": 0, "description": "success"}, [_entry(issued, foreign)]
+    )
+    assert len(list(src.authorized_keys("alice"))) == 1
+
+
+def test_comment_has_no_spaces(source, monkeypatch):
+    _answer(
+        monkeypatch,
+        {"result": 0, "description": "success"},
+        [_entry(_cert(eku=[ExtendedKeyUsageOID.CLIENT_AUTH]))],
+    )
+    (line,) = source.authorized_keys("alice")
+    assert len(line.split(" ")) == 3
+
+
+@pytest.mark.parametrize(
+    "options,message",
+    [
+        ({}, "needs a 'server'"),
+        ({"server": "dc", "auth": "magic"}, "auth must be one of"),
+        ({"server": "dc", "auth": "simple"}, "bind_dn and password_env"),
+        (
+            {
+                "server": "ldap://dc",
+                "auth": "simple",
+                "bind_dn": "x",
+                "password_env": "Y",
+                "starttls": False,
+            },
+            "ldap://",
+        ),
+        ({"server": "dc", "auth": "external"}, "tls_cert"),
+        ({"server": "dc", "client": "nope"}, "client must be"),
+        ({"server": "http://dc"}, "ldaps:// or ldap://"),
+    ],
+)
+def test_invalid_options_are_config_errors(options, message):
+    with pytest.raises(ConfigError, match=message):
         LDAPSource(options, {})
+
+
+def test_gssapi_with_ldap3_seals_a_clear_text_session(monkeypatch):
+    pytest.importorskip("winkerberos" if os.name == "nt" else "gssapi")
+    _fake_ldap3(monkeypatch)
+    src = LDAPSource({"server": "ldap://dc.example", "client": "ldap3"}, {})
+    _answer(monkeypatch, {"result": 0, "description": "success"}, [])
+    list(src.authorized_keys("alice"))
+    assert FakeConnection.options["session_security"] == ldap3.ENCRYPT
+    assert FakeConnection.options["sasl_mechanism"] == ldap3.KERBEROS
+    assert FakeConnection.options["auto_referrals"] is False
+
+
+def test_an_ssl_context_selects_ldap3_and_is_used(monkeypatch):
+    import ssl
+
+    from authkeys.sources._ldapclients import LDAP3Client
+
+    _fake_ldap3(monkeypatch)
+    seen = {}
+    monkeypatch.setattr(ldap3, "Server", lambda *a, **k: seen.update(k) or object())
+    context = ssl.create_default_context()
+    src = LDAPSource(
+        {"server": "dc.example", "auth": "anonymous"}, {}, ssl_context=context
+    )
+    assert isinstance(src.client, LDAP3Client)
+    _answer(monkeypatch, {"result": 0, "description": "success"}, [])
+    list(src.authorized_keys("alice"))
+    assert seen["tls"].context is context
+
+
+def test_python_ldap_refuses_an_ssl_context():
+    pytest.importorskip("ldap")
+    import ssl
+
+    with pytest.raises(ConfigError, match="cannot take an SSLContext"):
+        LDAPSource(
+            {"server": "dc", "client": "python-ldap", "auth": "anonymous"},
+            {},
+            ssl_context=ssl.create_default_context(),
+        )
+
+
+@pytest.mark.parametrize("server", ["ldap://dc.example", "LDAP://dc.example:389"])
+def test_plain_ldap_url_is_refused_without_sealing_or_starttls(server):
+    with pytest.raises(ConfigError, match="ldaps://"):
+        LDAPSource({"server": server, "auth": "anonymous"}, {})
 
 
 def test_failed_search_keeps_cached_keys_with_expired_on_error(source, monkeypatch):

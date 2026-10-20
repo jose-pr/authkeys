@@ -22,13 +22,18 @@ RSA = "ssh-rsa AAAAB3Nza alice@host"
 
 def test_ldap_search_filter_escapes_username():
     pytest.importorskip("ldap3")
-    src = LDAPSource({"username_attr": "uid"}, {})
-    flt = src._search_filter("*)(uid=*")
-    # The injection metacharacters must be escaped, not passed through literally.
-    assert "*)(uid=*" not in flt
-    assert flt.startswith("(uid=") and flt.endswith(")")
-    # ldap3 escapes '*' as \2a, '(' as \28, ')' as \29
-    assert r"\2a" in flt.lower()
+    src = LDAPSource(
+        {
+            "server": "dc",
+            "username_attr": "uid",
+            "auth": "anonymous",
+            "client": "ldap3",
+        },
+        {},
+    )
+    # RFC 4515: '*' -> \2a, '(' -> \28, ')' -> \29, '\' -> \5c, NUL -> \00
+    assert src._search_filter("*)(uid=*") == r"(uid=\2a\29\28uid=\2a)"
+    assert src._search_filter("a\\b\x00") == r"(uid=a\5cb\00)"
 
 
 # --- api_key fail-closed ------------------------------------------------
