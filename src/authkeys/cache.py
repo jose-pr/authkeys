@@ -225,6 +225,8 @@ class AuthKeysCache:
     cached "no keys" result so a newly-added key appears sooner. An *errored*
     resolution is never stored here -- only genuine results -- so
     ``expired_on_error`` never resurrects an outage as "empty".
+    ``max_stale`` (seconds, ``None`` for no bound) limits how long past its TTL an
+    entry may still be served with ``include_expired``.
     """
 
     def __init__(
@@ -232,9 +234,11 @@ class AuthKeysCache:
         backend: AuthKeysCacheBackend,
         ttl: int = 1,
         negative_ttl: "Optional[int]" = None,
+        max_stale: "Optional[int]" = None,
     ) -> None:
         self.ttl = ttl
         self.negative_ttl = ttl if negative_ttl is None else negative_ttl
+        self.max_stale = max_stale
         self.backend = backend
 
     def _fresh(self, stored_at: float, ttl: int) -> bool:
@@ -255,7 +259,10 @@ class AuthKeysCache:
         effective = self.negative_ttl if is_negative else (
             self.ttl if ttl is None else ttl
         )
-        if include_expired or self._fresh(stored_at, effective):
+        if self._fresh(stored_at, effective) or (
+            include_expired
+            and (self.max_stale is None or self._fresh(stored_at, effective + self.max_stale))
+        ):
             return "" if is_negative else value
         return None
 

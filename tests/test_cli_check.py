@@ -10,11 +10,15 @@ independent of that ordering. Manually verified end-to-end (outside pytest)
 that the "Using source: ..." line does land on the real stderr stream.
 """
 
+import os
 import logging
 import sys
 import types
 
 from authkeys.cli import run
+
+# The fake passwd entry's uid matches the files the test writes, as on a real host.
+_UID = getattr(os, "getuid", lambda: 0)()
 
 RSA = "ssh-rsa AAAAB3Nza"
 
@@ -26,8 +30,8 @@ def test_check_prints_key_to_stdout_and_traces_per_source(
     (home / ".ssh").mkdir(parents=True)
     (home / ".ssh" / "authorized_keys").write_text(RSA + "\n")
     fake_pwd = types.ModuleType("pwd")
-    fake_pwd.getpwnam = lambda n: types.SimpleNamespace(pw_name=n, pw_dir=str(home))
-    fake_pwd.getpwuid = lambda u: types.SimpleNamespace(pw_name="alice", pw_dir=str(home))
+    fake_pwd.getpwnam = lambda n: types.SimpleNamespace(pw_name=n, pw_dir=str(home), pw_uid=_UID)
+    fake_pwd.getpwuid = lambda u: types.SimpleNamespace(pw_name="alice", pw_dir=str(home), pw_uid=_UID)
     monkeypatch.setitem(sys.modules, "pwd", fake_pwd)
 
     conf = tmp_path / "authkeys.conf"

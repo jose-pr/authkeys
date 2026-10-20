@@ -16,6 +16,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   not owned by the user running authkeys or that group or others can write, and
   logs one WARNING naming the path. Make the cache directory owned by, and
   writable only by, the account that runs authkeys.
+- **A user's `~/.ssh/authkeys.conf` no longer expands `${env:NAME}`.** It is
+  written by the user it delegates for, so it could read the resolver's
+  environment (under `serve`, the API key) into a username that was logged and
+  sent to every source. `${env:NAME}` still works in the system configuration.
+- `~/.ssh/authorized_keys*` (file source) and `~/.ssh/authkeys.conf` are read
+  under sshd's StrictModes rules on POSIX: the file must be a regular file, not a
+  symbolic link, of at most 1 MiB, and it and every directory up to the home
+  must be owned by the user or root and not writable by group or others. A file
+  that fails is skipped with one WARNING naming the path and the reason.
 
 ### Fixed
 - A cache entry that cannot be read or parsed is treated as a miss and logged,
@@ -23,6 +32,25 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - A failed cache write (a full or read-only disk) is a WARNING; the keys the
   source returned are still printed. Before, they were discarded and the
   resolver fell back to expired keys or to none.
+- No "No config file found" WARNING is logged for a user without
+  `~/.ssh/authkeys.conf`; that file is optional. The warning remains for the
+  configuration named by `--config` or the system paths.
+- A delegation that stops existing stops working: when a user's
+  `~/.ssh/authkeys.conf` is removed or no longer parses, a long-running `serve`
+  no longer keeps the users and groups it granted before.
+- A broken delegation file is logged by error type and line number; the file's
+  text is no longer copied into the log.
+- `%` in a configuration value (an API key, a password, an `${env:...}`
+  expansion) is read as written. Before, it raised `InterpolationSyntaxError`:
+  `serve` exited 1 with a traceback and `resolve` exited 3.
+- A key line whose type is not an OpenSSH key type (`ssh-*`, `ecdsa-*`, `sk-*`,
+  after any options) is malformed and skipped with a WARNING, instead of being
+  returned as a key. The WARNING gives the reason, not the line.
+
+### Added
+- `[cache] max_stale` (seconds): with `expired_on_error`, an entry is served
+  after a source error only while it is at most `max_stale` seconds past its
+  TTL. Unset (the default) keeps today's unbounded fallback.
 
 ### Changed
 - **The `duho` requirement moves to its 0.7.x series: `>=0.7.4,<0.8.0`** (was

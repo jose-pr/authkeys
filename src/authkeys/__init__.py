@@ -6,6 +6,7 @@ caching and user/group aliasing. Designed to be driven either from the CLI as an
 ``AuthorizedKeysCommand`` or as a long-running key server (``authkeys serve``).
 """
 
+import configparser
 import re
 import threading
 from configparser import SectionProxy
@@ -38,6 +39,19 @@ _KEY_TYPE_RE = re.compile(r"^(ssh-|ecdsa-|sk-)")
 
 def _is_options_prefix(token: str) -> bool:
     return "=" in token or not _KEY_TYPE_RE.match(token)
+
+
+def _describe_config_error(error: Exception) -> str:
+    """Name a config parse error by type and line, never by the file's text."""
+    lines = getattr(error, "errors", None)
+    if lines:
+        return f"{type(error).__name__} at line(s) {', '.join(str(n) for n, _ in lines)}"
+    lineno = getattr(error, "lineno", None)
+    if lineno:
+        return f"{type(error).__name__} at line {lineno}"
+    if isinstance(error, configparser.Error):
+        return type(error).__name__
+    return f"{type(error).__name__}: {error}"
 
 
 def _split_first_token(line: str) -> "tuple":
@@ -88,7 +102,9 @@ class AuthorizedKey(NamedTuple):
             authorized_key = rest
         parts = authorized_key.split(" ", maxsplit=2)
         if len(parts) < 2:
-            raise ValueError(authorized_key)
+            raise ValueError("fewer than two fields")
+        if not _KEY_TYPE_RE.match(parts[0]):
+            raise ValueError("not a known key type")
         if len(parts) == 3 and comment is None:
             comment = parts[2]
         return cls(parts[0], parts[1], comment or "", options)
@@ -237,11 +253,18 @@ class AuthKeys:
         except (TypeError, ValueError):
             LOGGER.error(f"Invalid 'negative_expire' {neg_raw!r}; using expire")
             negative_ttl = None
+        stale_raw = cache_conf.get("max_stale")
+        try:
+            max_stale = int(stale_raw) if stale_raw is not None else None
+        except (TypeError, ValueError):
+            LOGGER.error(f"Invalid 'max_stale' {stale_raw!r}; expired keys are not bounded")
+            max_stale = None
         try:
             self.cache = AuthKeysCache(
                 backend=cache_backend.from_config(cache_conf),
                 ttl=ttl,
                 negative_ttl=negative_ttl,
+                max_stale=max_stale,
             )
         except Exception as e:
             LOGGER.error(f"Could not load cache due to\n{e}")
@@ -280,17 +303,38 @@ class AuthKeys:
         fully-materialized list.
         """
         if load_delegation:
-            path = self.user_config_path(username)
+            # The file as it is now decides: a grant from an earlier load must
+            # not survive the file being removed or broken.
+            with self._lock:
+                self.users.pop(username, None)
             try:
-                user_conf = AuthkeysConfig.from_config(path) if path else None
-                if user_conf is not None:
+                text = self._delegation_text(username)
+                if text is not None:
+                    user_conf = AuthkeysConfig.from_config(
+                        text.encode("utf-8"), interpolate_env=False
+                    )
                     with self._lock:
                         self.load_user_config(username, user_conf)
             except Exception as e:
                 LOGGER.error(
-                    f"Could not load delegation config for {username}: {e}"
+                    f"Could not load delegation config for {username}: "
+                    f"{_describe_config_error(e)}"
                 )
         return list(self.authorized_keys(username))
+
+    def _delegation_text(self, username: str) -> "Optional[str]":
+        """The user's delegation file, read under the user-file checks, or None."""
+        from pathlib import Path
+
+        path = self.user_config_path(username)
+        if not path:
+            return None
+        try:
+            user = utils.get_user(username)
+            owner, home = user.pw_uid, Path(user.pw_dir)
+        except Exception:
+            owner, home = -1, Path(path).parent.parent
+        return utils.read_user_file(Path(path), owner, home)
 
     def load_user_config(self, username: str, parser: AuthkeysConfig) -> None:
         config = UserConfig()

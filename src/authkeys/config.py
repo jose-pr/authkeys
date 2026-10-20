@@ -74,6 +74,11 @@ def _split_path_list(value: str) -> "List[str]":
 class AuthkeysConfig(configparser.ConfigParser):
     CONF_PATHS = [Path("./authkeys.conf")]
 
+    def __init__(self, *args, **kwargs) -> None:
+        # A value is data: `%` in an API key or a password must not be parsed.
+        kwargs.setdefault("interpolation", None)
+        super().__init__(*args, **kwargs)
+
     def getlist(self, section, option, **kwargs) -> "List[str]":
         value = self.get(section, option, **kwargs)
         if not isinstance(value, str):
@@ -84,7 +89,18 @@ class AuthkeysConfig(configparser.ConfigParser):
         return list(filter(None, (x.strip() for x in value.splitlines())))
 
     @classmethod
-    def from_config(cls, config: "ConfigSource | Iterable[ConfigSource] | None" = None):
+    def from_config(
+        cls,
+        config: "ConfigSource | Iterable[ConfigSource] | None" = None,
+        *,
+        interpolate_env: bool = True,
+    ):
+        """Build a config from paths, text, bytes or dicts (see the module docs).
+
+        ``interpolate_env=False`` leaves ``${env:NAME}`` as written: a file the
+        target user controls must not read the resolver's environment.
+        """
+        expand = _interpolate_env if interpolate_env else (lambda text: text)
         conf = cls()
         conf.read_dict({"cache": {}, "globals": {}})
 
@@ -105,11 +121,11 @@ class AuthkeysConfig(configparser.ConfigParser):
             if isinstance(item, Path):
                 searched.append(item)
                 if item.exists():
-                    conf.read_string(_interpolate_env(item.read_text()))
+                    conf.read_string(expand(item.read_text()))
                     loaded = True
                     break
             elif isinstance(item, bytes):
-                conf.read_string(_interpolate_env(item.decode()))
+                conf.read_string(expand(item.decode()))
                 loaded = True
             elif isinstance(item, dict):
                 conf.read_dict(item)

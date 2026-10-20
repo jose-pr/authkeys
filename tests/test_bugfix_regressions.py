@@ -1,5 +1,6 @@
 """Regression tests for assorted security and correctness fixes."""
 
+import os
 import threading
 import time
 import urllib.error
@@ -10,6 +11,9 @@ import pytest
 from authkeys import AuthKeys, AuthkeysConfig, AuthkeysSource
 from authkeys.server import KeyServer
 from authkeys.sources.http import HttpAuthorizedKeys, _parse_verify
+
+# The fake passwd entry's uid matches the files the test writes, as on a real host.
+_UID = getattr(os, "getuid", lambda: 0)()
 
 RSA = "ssh-rsa AAAAB3Nza alice@host"
 
@@ -180,7 +184,7 @@ def test_serve_resolves_delegated_users(tmp_path, monkeypatch):
         "[authorized]\nusers =\n    alice\n    bob\n"
     )
     fake_pwd = types.ModuleType("pwd")
-    fake_pwd.getpwnam = lambda n: types.SimpleNamespace(pw_name=n, pw_dir=str(home))
+    fake_pwd.getpwnam = lambda n: types.SimpleNamespace(pw_name=n, pw_dir=str(home), pw_uid=_UID)
     monkeypatch.setitem(sys.modules, "pwd", fake_pwd)
 
     conf = AuthkeysConfig.from_config(

@@ -4,7 +4,7 @@ from configparser import SectionProxy
 from pathlib import Path
 from typing import Iterable
 
-from .. import AuthkeysSource
+from .. import AuthkeysSource, utils
 
 
 class AuthorizedKeysFiles(AuthkeysSource):
@@ -18,11 +18,11 @@ class AuthorizedKeysFiles(AuthkeysSource):
             user = pwd.getpwnam(username)
         except KeyError:
             return
-        ssh_home = Path(user.pw_dir) / ".ssh"
+        home = Path(user.pw_dir)
+        ssh_home = home / ".ssh"
         for path in self.paths:
-            keyfile = ssh_home / path
-            if keyfile.exists():
-                for line in keyfile.read_text().splitlines():
-                    line = line.strip()
-                    if line and not line.startswith("#"):
-                        yield line
+            text = utils.read_user_file(ssh_home / path, user.pw_uid, home)
+            for line in (text or "").splitlines():
+                line = line.strip()
+                if line and not line.startswith("#"):
+                    yield line

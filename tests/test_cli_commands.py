@@ -1,5 +1,6 @@
 """CLI-level behavior: no-traceback resolve, exit codes, cache subcommand."""
 
+import os
 import json
 import sys
 import types
@@ -7,6 +8,9 @@ import types
 import pytest
 
 from authkeys.cli import run
+
+# The fake passwd entry's uid matches the files the test writes, as on a real host.
+_UID = getattr(os, "getuid", lambda: 0)()
 
 RSA = "ssh-rsa AAAAB3Nza a"
 
@@ -63,8 +67,8 @@ def test_cache_warm(tmp_path, monkeypatch):
     (home / ".ssh").mkdir(parents=True)
     (home / ".ssh" / "authorized_keys").write_text(RSA + "\n")
     fake_pwd = types.ModuleType("pwd")
-    fake_pwd.getpwnam = lambda n: types.SimpleNamespace(pw_name=n, pw_dir=str(home))
-    fake_pwd.getpwuid = lambda u: types.SimpleNamespace(pw_name="me", pw_dir=str(home))
+    fake_pwd.getpwnam = lambda n: types.SimpleNamespace(pw_name=n, pw_dir=str(home), pw_uid=_UID)
+    fake_pwd.getpwuid = lambda u: types.SimpleNamespace(pw_name="me", pw_dir=str(home), pw_uid=_UID)
     monkeypatch.setitem(sys.modules, "pwd", fake_pwd)
 
     assert run(["cache", "warm", "alice", "--config", str(conf)]) == 0
@@ -79,8 +83,8 @@ def _file_source_config(tmp_path, lines):
     conf = tmp_path / "authkeys.conf"
     conf.write_text("[source:files]\nbackend = authkeys.sources.authorizedkeys\n")
     fake_pwd = types.ModuleType("pwd")
-    fake_pwd.getpwnam = lambda n: types.SimpleNamespace(pw_name=n, pw_dir=str(home))
-    fake_pwd.getpwuid = lambda u: types.SimpleNamespace(pw_name="alice", pw_dir=str(home))
+    fake_pwd.getpwnam = lambda n: types.SimpleNamespace(pw_name=n, pw_dir=str(home), pw_uid=_UID)
+    fake_pwd.getpwuid = lambda u: types.SimpleNamespace(pw_name="alice", pw_dir=str(home), pw_uid=_UID)
     return conf, fake_pwd
 
 

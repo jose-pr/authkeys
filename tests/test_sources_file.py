@@ -3,6 +3,7 @@
 `pwd` is POSIX-only, so we inject a fake module to run cross-platform.
 """
 
+import os
 import sys
 import types
 
@@ -10,6 +11,9 @@ import pytest
 
 from authkeys import AuthkeysConfig
 from authkeys.sources.file import AuthorizedKeysFiles
+
+# The fake passwd entry's uid matches the files the test writes, as on a real host.
+_UID = getattr(os, "getuid", lambda: 0)()
 
 RSA = "ssh-rsa AAAAB3Nza alice@host"
 
@@ -22,7 +26,7 @@ def fake_pwd(monkeypatch, tmp_path):
     fake = types.ModuleType("pwd")
 
     def getpwnam(name):
-        return types.SimpleNamespace(pw_name=name, pw_dir=str(home))
+        return types.SimpleNamespace(pw_name=name, pw_dir=str(home), pw_uid=_UID)
 
     fake.getpwnam = getpwnam  # type: ignore
     monkeypatch.setitem(sys.modules, "pwd", fake)

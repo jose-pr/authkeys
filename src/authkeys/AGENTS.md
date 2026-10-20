@@ -15,7 +15,8 @@ POSIX-only at runtime (`pwd`/`grp` imported lazily) — noted per entry below.
   - `AuthorizedKey.parse(line, comment=None) -> AuthorizedKey` — parses one
     `authorized_keys` line. Splits off a leading **options prefix** (a first
     token containing `=`, or not matching `^(ssh-|ecdsa-|sk-)`) before
-    `type key [comment]`; raises `ValueError` if fewer than 2 tokens remain.
+    `type key [comment]`; raises `ValueError` if fewer than 2 tokens remain
+    or the type is not an OpenSSH key type (`ssh-*`, `ecdsa-*`, `sk-*`).
     The options token is **quote-aware**, per sshd(8): a space ends it only
     outside double quotes, and `\"` escapes a quote within a quoted value, so
     `command="/usr/bin/tunnel -n 5",no-pty ssh-ed25519 AAAA bob` keeps its real
@@ -51,7 +52,8 @@ POSIX-only at runtime (`pwd`/`grp` imported lazily) — noted per entry below.
     `[cache] expired_on_error`.
   - `resolve(username, *, load_delegation=True) -> list[AuthorizedKey]` —
     loads a per-user delegation config (if the user has a local account and
-    the file exists) under an internal lock, then resolves keys **outside**
+    the file exists and passes the user-file checks; no `${env:}` expansion;
+    a previous grant is dropped first) under an internal lock, then resolves keys **outside**
     the lock so one slow source can't stall concurrent callers (e.g. the HTTP
     server's request threads). This is the entry point the CLI and the HTTP
     server both call.
@@ -83,7 +85,9 @@ POSIX-only at runtime (`pwd`/`grp` imported lazily) — noted per entry below.
     take the **first existing** path and stop; `bytes`/`dict` items are
     always merged in. `${env:VAR}` in file text/bytes is interpolated from
     `os.environ` (a missing variable expands to an empty string) before
-    parsing. If **path** candidates were given and **none** existed, one
+    parsing; pass `interpolate_env=False` (keyword) to leave `${env:...}` as
+    written, as the per-user delegation file is read. Values are not
+    `%`-interpolated (`interpolation=None`). If **path** candidates were given and **none** existed, one
     `WARNING` is logged to the `authkeys` logger naming every path searched,
     and an empty config is still returned — callers must keep exiting 0, since
     "no keys" is a valid `AuthorizedKeysCommand` answer. `bytes`/`dict`
@@ -103,13 +107,18 @@ POSIX-only at runtime (`pwd`/`grp` imported lazily) — noted per entry below.
 - **`AuthKeysCacheMemBackend`** — per-process `dict`; `from_config` takes no
   options.
 - **`AuthKeysCacheFileBackend(path)`** — one file per `(uid, source)` under
-  `<path>/<source>/<uid>`; file mtime is the timestamp. Writes are atomic
+  `<path>/<source>/<uid>`; file mtime is the timestamp. A uid or source that
+  is not one plain name (empty, `.`, `..`, or holding `/`, `\`, `:`, NUL) raises
+  `ValueError`; on POSIX a root, source directory or entry not owned by the
+  running user or writable by group/other is ignored (one WARNING). Writes are atomic
   (tempfile + rename); directories/files are chmod'd to owner-only
   (best-effort — an `OSError` is swallowed, e.g. on a non-POSIX filesystem).
   `from_config` reads `path` (first existing entry wins) — raises
   `FileNotFoundError` if none exist.
-- **`AuthKeysCache(backend, ttl=1, negative_ttl=None)`** — `negative_ttl`
-  defaults to `ttl`. `get(key, *, include_expired=False, ttl=None) -> str |
+- **`AuthKeysCache(backend, ttl=1, negative_ttl=None, max_stale=None)`** — `negative_ttl`
+  defaults to `ttl`; `max_stale` (seconds) bounds how far past its TTL an entry
+  is still returned with `include_expired=True` (`None`: no bound; from
+  `[cache] max_stale`). `get(key, *, include_expired=False, ttl=None) -> str |
   None`; `__getitem__` is `get(include_expired=False)`. `set(key, value, *,
   negative=False)`; `__setitem__` treats an **empty string** value as a
   negative (known-empty) entry stored under `negative_ttl`. An errored
@@ -121,8 +130,8 @@ Aliases usable as `backend = authkeys.sources.<alias>` in a `[source:*]`
 section; each is also importable directly as its real class.
 
 - **`authorizedkeys`** (`sources/file.py`) — reads `~/.ssh/<paths>` for the
-  target user (`paths` config, default `authorized_keys, authorized_keys2`);
-  `#`-comment/blank lines skipped. POSIX-only (`pwd.getpwnam`); yields nothing
+  target user (`paths` config, default `authorized_keys, authorized_keys2`)
+  through `utils.read_user_file`; `#`-comment/blank lines skipped. POSIX-only (`pwd.getpwnam`); yields nothing
   for an unknown user.
 - **`http`** (`sources/http.py`) — GETs `address` (a `{username}`-templated
   format string, percent-encoded), one key per response line. Config:
@@ -217,7 +226,12 @@ model this builds on.
 - **`authkeys.utils`**: `parse_bool(val) -> bool` (`"1"/"true"/"enabled"/
   "yes"/"on"`, case-insensitive); `get_user(username=None)` -> a passwd-entry
   object (current uid if omitted; POSIX-only, lazy); `get_groupmembers(name)
-  -> list[str]` (POSIX-only, lazy); `import_module_object("pkg.mod.attr") ->
+  -> list[str]` (POSIX-only, lazy); `read_user_file(path, owner_uid, home) ->
+  str | None` (sshd StrictModes-style: a regular file, not a symlink, at most
+  `MAX_USER_FILE_BYTES` = 1 MiB, it and each directory up to `home` owned by
+  `owner_uid` or root and not group/other-writable; `None` when absent or
+  refused, a refusal logs one WARNING; the mode checks apply on POSIX only);
+  `import_module_object("pkg.mod.attr") ->
   Any`; `try_import(fqdn) -> Any | None` (swallows any exception);
   `call(target: str | Callable, *a, **kw) -> Any` (resolves a dotted-path
   target first).
