@@ -99,9 +99,7 @@ class KeyServer(ThreadingHTTPServer):
         # Compare bytes: hmac.compare_digest raises TypeError on non-ASCII str,
         # so a crafted ?apikey=<non-ascii> would otherwise 500 instead of 401.
         expected = self.api_key.encode("utf-8")
-        return any(
-            hmac.compare_digest(p.encode("utf-8"), expected) for p in provided
-        )
+        return any(hmac.compare_digest(p.encode("utf-8"), expected) for p in provided)
 
 
 class KeyHandler(BaseHTTPRequestHandler):

@@ -45,7 +45,9 @@ def _describe_config_error(error: Exception) -> str:
     """Name a config parse error by type and line, never by the file's text."""
     lines = getattr(error, "errors", None)
     if lines:
-        return f"{type(error).__name__} at line(s) {', '.join(str(n) for n, _ in lines)}"
+        return (
+            f"{type(error).__name__} at line(s) {', '.join(str(n) for n, _ in lines)}"
+        )
     lineno = getattr(error, "lineno", None)
     if lineno:
         return f"{type(error).__name__} at line {lineno}"
@@ -88,13 +90,19 @@ class AuthorizedKey(NamedTuple):
     options: str = ""
 
     def __repr__(self) -> str:
-        base = f"{self.type} {self.key} {self.comment}" if self.comment else f"{self.type} {self.key}"
+        base = (
+            f"{self.type} {self.key} {self.comment}"
+            if self.comment
+            else f"{self.type} {self.key}"
+        )
         if self.options:
             return f"{self.options} {base}"
         return base
 
     @classmethod
-    def parse(cls, authorized_key: str, comment: "Optional[str]" = None) -> "AuthorizedKey":
+    def parse(
+        cls, authorized_key: str, comment: "Optional[str]" = None
+    ) -> "AuthorizedKey":
         options = ""
         first, rest = _split_first_token(authorized_key)
         if first and _is_options_prefix(first):
@@ -217,7 +225,7 @@ class AuthKeys:
         for section in config.sections():
             if not section.startswith("source:"):
                 continue
-            name = section[len("source:"):]
+            name = section[len("source:") :]
             src_config = config[section]
             LOGGER.info(f"Registering source {name}")
             self.sources[name] = Source.from_config(
@@ -257,7 +265,9 @@ class AuthKeys:
         try:
             max_stale = int(stale_raw) if stale_raw is not None else None
         except (TypeError, ValueError):
-            LOGGER.error(f"Invalid 'max_stale' {stale_raw!r}; expired keys are not bounded")
+            LOGGER.error(
+                f"Invalid 'max_stale' {stale_raw!r}; expired keys are not bounded"
+            )
             max_stale = None
         try:
             self.cache = AuthKeysCache(
@@ -270,9 +280,7 @@ class AuthKeys:
             LOGGER.error(f"Could not load cache due to\n{e}")
             self.cache = None
 
-        self.use_expired_on_error = utils.parse_bool(
-            cache_conf.get("expired_on_error")
-        )
+        self.use_expired_on_error = utils.parse_bool(cache_conf.get("expired_on_error"))
 
     def user_config_path(self, username: str):
         """Return a user's ``~/.ssh/authkeys.conf`` path, or None if unknown.
@@ -413,9 +421,7 @@ class AuthKeys:
                 src_name, uid, src.backend.authorized_keys(uid), src.sanitize
             )
         except Exception as e:
-            LOGGER.error(
-                f"Error while loading keys for {usr} from {src_name}\n{e}"
-            )
+            LOGGER.error(f"Error while loading keys for {usr} from {src_name}\n{e}")
             if self.use_expired_on_error and self.cache:
                 expired = self._cached_keys(cache_key, include_expired=True)
                 if expired:

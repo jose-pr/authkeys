@@ -19,7 +19,9 @@ def test_resolve_broken_config_exits_nonzero_no_traceback(tmp_path, capsys):
     # A resolve that blows up internally must return a clean non-zero code with
     # no traceback on stdout (sshd reads stdout as authorized_keys).
     bad = tmp_path / "authkeys.conf"
-    bad.write_text("[cache]\nbackend = does.not.Exist\n[source:x]\nbackend = also.not.here\n")
+    bad.write_text(
+        "[cache]\nbackend = does.not.Exist\n[source:x]\nbackend = also.not.here\n"
+    )
     rc = run(["resolve", "someone", "--config", str(bad)])
     out = capsys.readouterr()
     assert rc in (0, 3)  # never crashes; 3 on internal error, 0 if it degrades
@@ -67,8 +69,12 @@ def test_cache_warm(tmp_path, monkeypatch):
     (home / ".ssh").mkdir(parents=True)
     (home / ".ssh" / "authorized_keys").write_text(RSA + "\n")
     fake_pwd = types.ModuleType("pwd")
-    fake_pwd.getpwnam = lambda n: types.SimpleNamespace(pw_name=n, pw_dir=str(home), pw_uid=_UID)
-    fake_pwd.getpwuid = lambda u: types.SimpleNamespace(pw_name="me", pw_dir=str(home), pw_uid=_UID)
+    fake_pwd.getpwnam = lambda n: types.SimpleNamespace(
+        pw_name=n, pw_dir=str(home), pw_uid=_UID
+    )
+    fake_pwd.getpwuid = lambda u: types.SimpleNamespace(
+        pw_name="me", pw_dir=str(home), pw_uid=_UID
+    )
     monkeypatch.setitem(sys.modules, "pwd", fake_pwd)
 
     assert run(["cache", "warm", "alice", "--config", str(conf)]) == 0
@@ -83,8 +89,12 @@ def _file_source_config(tmp_path, lines):
     conf = tmp_path / "authkeys.conf"
     conf.write_text("[source:files]\nbackend = authkeys.sources.authorizedkeys\n")
     fake_pwd = types.ModuleType("pwd")
-    fake_pwd.getpwnam = lambda n: types.SimpleNamespace(pw_name=n, pw_dir=str(home), pw_uid=_UID)
-    fake_pwd.getpwuid = lambda u: types.SimpleNamespace(pw_name="alice", pw_dir=str(home), pw_uid=_UID)
+    fake_pwd.getpwnam = lambda n: types.SimpleNamespace(
+        pw_name=n, pw_dir=str(home), pw_uid=_UID
+    )
+    fake_pwd.getpwuid = lambda u: types.SimpleNamespace(
+        pw_name="alice", pw_dir=str(home), pw_uid=_UID
+    )
     return conf, fake_pwd
 
 
@@ -163,7 +173,9 @@ def test_check_format_json(tmp_path, monkeypatch, capsys):
     out = capsys.readouterr().out
     assert rc == 0
     parsed = json.loads(out)
-    assert parsed == [{"type": "ssh-rsa", "key": "AAAAB3Nza", "comment": "a", "options": ""}]
+    assert parsed == [
+        {"type": "ssh-rsa", "key": "AAAAB3Nza", "comment": "a", "options": ""}
+    ]
 
 
 def test_cache_without_cache_configured_logs_and_exits_3(tmp_path, caplog, capsys):

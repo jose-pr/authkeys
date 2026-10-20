@@ -36,7 +36,9 @@ def test_from_config_first_existing_path_wins(tmp_path):
 
 def test_env_interpolation(monkeypatch):
     monkeypatch.setenv("AUTHKEYS_TEST_SECRET", "s3cr3t")
-    conf = AuthkeysConfig.from_config(b"[serve]\napi_key = ${env:AUTHKEYS_TEST_SECRET}\n")
+    conf = AuthkeysConfig.from_config(
+        b"[serve]\napi_key = ${env:AUTHKEYS_TEST_SECRET}\n"
+    )
     assert conf["serve"]["api_key"] == "s3cr3t"
 
 

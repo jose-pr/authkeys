@@ -256,12 +256,15 @@ class AuthKeysCache:
             return None
         value, stored_at = result
         is_negative = value == _NEGATIVE_MARKER
-        effective = self.negative_ttl if is_negative else (
-            self.ttl if ttl is None else ttl
+        effective = (
+            self.negative_ttl if is_negative else (self.ttl if ttl is None else ttl)
         )
         if self._fresh(stored_at, effective) or (
             include_expired
-            and (self.max_stale is None or self._fresh(stored_at, effective + self.max_stale))
+            and (
+                self.max_stale is None
+                or self._fresh(stored_at, effective + self.max_stale)
+            )
         ):
             return "" if is_negative else value
         return None

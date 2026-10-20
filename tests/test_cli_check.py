@@ -30,8 +30,12 @@ def test_check_prints_key_to_stdout_and_traces_per_source(
     (home / ".ssh").mkdir(parents=True)
     (home / ".ssh" / "authorized_keys").write_text(RSA + "\n")
     fake_pwd = types.ModuleType("pwd")
-    fake_pwd.getpwnam = lambda n: types.SimpleNamespace(pw_name=n, pw_dir=str(home), pw_uid=_UID)
-    fake_pwd.getpwuid = lambda u: types.SimpleNamespace(pw_name="alice", pw_dir=str(home), pw_uid=_UID)
+    fake_pwd.getpwnam = lambda n: types.SimpleNamespace(
+        pw_name=n, pw_dir=str(home), pw_uid=_UID
+    )
+    fake_pwd.getpwuid = lambda u: types.SimpleNamespace(
+        pw_name="alice", pw_dir=str(home), pw_uid=_UID
+    )
     monkeypatch.setitem(sys.modules, "pwd", fake_pwd)
 
     conf = tmp_path / "authkeys.conf"

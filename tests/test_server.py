@@ -100,7 +100,11 @@ def test_unknown_route_is_404(server):
 
 def test_auth_disabled_when_no_api_key():
     conf = AuthkeysConfig.from_config(
-        {"cache": {}, "globals": {}, "source:test": {"backend": f"{__name__}.OneKeySource"}}
+        {
+            "cache": {},
+            "globals": {},
+            "source:test": {"backend": f"{__name__}.OneKeySource"},
+        }
     )
     auth = AuthKeys()
     auth.load_config(conf)
@@ -113,7 +117,11 @@ def test_require_auth_with_empty_api_key_raises():
     # constructing with require_auth=True and a falsy api_key must refuse to
     # start rather than silently disabling authentication.
     conf = AuthkeysConfig.from_config(
-        {"cache": {}, "globals": {}, "source:test": {"backend": f"{__name__}.OneKeySource"}}
+        {
+            "cache": {},
+            "globals": {},
+            "source:test": {"backend": f"{__name__}.OneKeySource"},
+        }
     )
     auth = AuthKeys()
     auth.load_config(conf)
@@ -123,13 +131,15 @@ def test_require_auth_with_empty_api_key_raises():
 
 def test_require_auth_with_set_api_key_ok():
     conf = AuthkeysConfig.from_config(
-        {"cache": {}, "globals": {}, "source:test": {"backend": f"{__name__}.OneKeySource"}}
+        {
+            "cache": {},
+            "globals": {},
+            "source:test": {"backend": f"{__name__}.OneKeySource"},
+        }
     )
     auth = AuthKeys()
     auth.load_config(conf)
-    srv = KeyServer(
-        auth, bind="127.0.0.1", port=0, api_key="secret", require_auth=True
-    )
+    srv = KeyServer(auth, bind="127.0.0.1", port=0, api_key="secret", require_auth=True)
     assert srv.check_auth(["secret"]) is True
 
 
@@ -137,7 +147,11 @@ def _start(**options):
     auth = AuthKeys()
     auth.load_config(
         AuthkeysConfig.from_config(
-            {"cache": {}, "globals": {}, "source:test": {"backend": f"{__name__}.OneKeySource"}}
+            {
+                "cache": {},
+                "globals": {},
+                "source:test": {"backend": f"{__name__}.OneKeySource"},
+            }
         )
     )
     srv = KeyServer(auth, bind="127.0.0.1", port=0, api_key="secret", **options)

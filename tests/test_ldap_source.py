@@ -25,7 +25,11 @@ def _cert(*, self_signed=False, key_usage=None, eku=None, expired=False):
     key = ec.generate_private_key(ec.SECP256R1())
     subject = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "alice")])
     start = NOW - datetime.timedelta(days=30)
-    end = NOW - datetime.timedelta(days=1) if expired else NOW + datetime.timedelta(days=30)
+    end = (
+        NOW - datetime.timedelta(days=1)
+        if expired
+        else NOW + datetime.timedelta(days=30)
+    )
     builder = (
         x509.CertificateBuilder()
         .subject_name(subject)
@@ -37,9 +41,17 @@ def _cert(*, self_signed=False, key_usage=None, eku=None, expired=False):
     )
     if key_usage is not None:
         flags = dict.fromkeys(
-            ["digital_signature", "content_commitment", "key_encipherment",
-             "data_encipherment", "key_agreement", "key_cert_sign", "crl_sign",
-             "encipher_only", "decipher_only"],
+            [
+                "digital_signature",
+                "content_commitment",
+                "key_encipherment",
+                "data_encipherment",
+                "key_agreement",
+                "key_cert_sign",
+                "crl_sign",
+                "encipher_only",
+                "decipher_only",
+            ],
             False,
         )
         flags.update(key_usage)
@@ -90,7 +102,11 @@ REF = {"type": "searchResRef", "uri": ["ldap://ForestDnsZones.example/DC=example
 
 def _entry(*certs):
     der = [c.public_bytes(serialization.Encoding.DER) for c in certs]
-    return {"type": "searchResEntry", "dn": "uid=alice", "raw_attributes": {"userCertificate": der}}
+    return {
+        "type": "searchResEntry",
+        "dn": "uid=alice",
+        "raw_attributes": {"userCertificate": der},
+    }
 
 
 @pytest.fixture
@@ -101,10 +117,14 @@ def source(tmp_path, monkeypatch):
     monkeypatch.setattr(ldap3, "Server", lambda *a, **k: object())
     monkeypatch.setattr(ldap3, "Tls", lambda *a, **k: object())
     conf = AuthkeysConfig.from_config(
-        {"source:ldap": {
-            "server": "ldaps://dc.example", "basedn": "dc=example",
-            "tls_cert": str(tmp_path / "cert.pem"), "tls_key": str(tmp_path / "key.pem"),
-        }}
+        {
+            "source:ldap": {
+                "server": "ldaps://dc.example",
+                "basedn": "dc=example",
+                "tls_cert": str(tmp_path / "cert.pem"),
+                "tls_key": str(tmp_path / "key.pem"),
+            }
+        }
     )
     return LdapAuthorizedKeys(conf["source:ldap"], {})
 
@@ -127,7 +147,11 @@ def test_referrals_only_is_no_keys(source, monkeypatch):
 
 def test_entry_after_referrals_is_read_and_filtered(source, monkeypatch):
     good, efs = _cert(eku=[ExtendedKeyUsageOID.CLIENT_AUTH]), _cert(self_signed=True)
-    _answer(monkeypatch, {"result": 0, "description": "success"}, [REF, _entry(good, efs), REF])
+    _answer(
+        monkeypatch,
+        {"result": 0, "description": "success"},
+        [REF, _entry(good, efs), REF],
+    )
     keys = list(source.authorized_keys("alice"))
     assert len(keys) == 1 and keys[0].startswith("ecdsa-sha2-nistp256 ")
 
@@ -146,13 +170,21 @@ def test_ambiguous_match_raises(source, monkeypatch):
 
 def test_cert_filter_none_keeps_every_certificate(source, monkeypatch, tmp_path):
     conf = AuthkeysConfig.from_config(
-        {"source:ldap": {
-            "server": "dc.example", "cert_filter": "none",
-            "tls_cert": str(tmp_path / "cert.pem"), "tls_key": str(tmp_path / "key.pem"),
-        }}
+        {
+            "source:ldap": {
+                "server": "dc.example",
+                "cert_filter": "none",
+                "tls_cert": str(tmp_path / "cert.pem"),
+                "tls_key": str(tmp_path / "key.pem"),
+            }
+        }
     )
     src = LdapAuthorizedKeys(conf["source:ldap"], {})
-    _answer(monkeypatch, {"result": 0, "description": "success"}, [_entry(_cert(self_signed=True))])
+    _answer(
+        monkeypatch,
+        {"result": 0, "description": "success"},
+        [_entry(_cert(self_signed=True))],
+    )
     assert len(list(src.authorized_keys("alice"))) == 1
 
 
@@ -170,9 +202,16 @@ def test_failed_search_keeps_cached_keys_with_expired_on_error(source, monkeypat
     auth = AuthKeys()
     auth.cache = AuthKeysCache(AuthKeysCacheMemBackend(), ttl=0)
     auth.use_expired_on_error = True
-    auth.sources = {"ldap": Source(cached=True, enabled=True, backend=source, sanitize=None, expire=None)}
-    _answer(monkeypatch, {"result": 0, "description": "success"},
-            [_entry(_cert(eku=[ExtendedKeyUsageOID.CLIENT_AUTH]))])
+    auth.sources = {
+        "ldap": Source(
+            cached=True, enabled=True, backend=source, sanitize=None, expire=None
+        )
+    }
+    _answer(
+        monkeypatch,
+        {"result": 0, "description": "success"},
+        [_entry(_cert(eku=[ExtendedKeyUsageOID.CLIENT_AUTH]))],
+    )
     first = list(auth.authorized_keys("alice"))
     _answer(monkeypatch, {"result": 49, "description": "invalidCredentials"}, [])
     assert [k.key for k in auth.authorized_keys("alice")] == [k.key for k in first]

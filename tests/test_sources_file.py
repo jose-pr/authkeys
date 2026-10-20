@@ -39,9 +39,7 @@ def _source():
 
 
 def test_reads_keys_skipping_blanks_and_comments(fake_pwd):
-    (fake_pwd / ".ssh" / "authorized_keys").write_text(
-        f"# comment\n\n{RSA}\n   \n"
-    )
+    (fake_pwd / ".ssh" / "authorized_keys").write_text(f"# comment\n\n{RSA}\n   \n")
     keys = list(_source().authorized_keys("alice"))
     assert keys == [RSA]
 

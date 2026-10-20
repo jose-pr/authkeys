@@ -32,12 +32,16 @@ def _auth(tmp_path, keys, monkeypatch):
         utils,
         "get_user",
         lambda username=None: types.SimpleNamespace(
-            pw_name=username, pw_dir=str(tmp_path), pw_uid=getattr(os, "getuid", lambda: 0)()
+            pw_name=username,
+            pw_dir=str(tmp_path),
+            pw_uid=getattr(os, "getuid", lambda: 0)(),
         ),
     )
     auth = AuthKeys()
     auth.sources = {
-        "s": Source(cached=False, enabled=True, backend=Keys(keys), sanitize=None, expire=None)
+        "s": Source(
+            cached=False, enabled=True, backend=Keys(keys), sanitize=None, expire=None
+        )
     }
     conf = tmp_path / "authkeys.conf"
     auth.user_config_path = lambda username: conf
@@ -71,7 +75,9 @@ def test_missing_delegation_file_logs_nothing(tmp_path, monkeypatch, caplog):
     assert [r for r in caplog.records if r.levelname == "WARNING"] == []
 
 
-def test_broken_delegation_file_is_named_by_line_not_content(tmp_path, monkeypatch, caplog):
+def test_broken_delegation_file_is_named_by_line_not_content(
+    tmp_path, monkeypatch, caplog
+):
     auth, conf = _auth(tmp_path, {}, monkeypatch)
     conf.write_text("secret line one\n")
     auth.resolve("alice")
@@ -110,7 +116,11 @@ def _fake_modes(monkeypatch, tmp_path, overrides):
                 return os.stat_result(fields)
             if key.startswith(os.path.abspath(tmp_path)):
                 fields = list(st)
-                fields[0] = (stat.S_IFDIR | 0o755) if stat.S_ISDIR(st.st_mode) else (stat.S_IFREG | 0o644)
+                fields[0] = (
+                    (stat.S_IFDIR | 0o755)
+                    if stat.S_ISDIR(st.st_mode)
+                    else (stat.S_IFREG | 0o644)
+                )
                 fields[4] = 1000
                 return os.stat_result(fields)
             return st
@@ -146,7 +156,9 @@ def test_secure_file_is_read(tmp_path, monkeypatch):
         ("file", 1000, stat.S_IFLNK | 0o777, "symbolic link"),
     ],
 )
-def test_insecure_file_is_refused(tmp_path, monkeypatch, caplog, target, uid, mode, reason):
+def test_insecure_file_is_refused(
+    tmp_path, monkeypatch, caplog, target, uid, mode, reason
+):
     home, ssh, keyfile = _home(tmp_path)
     path = {"ssh": ssh, "home": home, "file": keyfile}[target]
     _fake_modes(monkeypatch, tmp_path, {os.path.abspath(path): (uid, mode)})
@@ -156,7 +168,9 @@ def test_insecure_file_is_refused(tmp_path, monkeypatch, caplog, target, uid, mo
 
 def test_root_owned_file_is_accepted(tmp_path, monkeypatch):
     home, _, keyfile = _home(tmp_path)
-    _fake_modes(monkeypatch, tmp_path, {os.path.abspath(keyfile): (0, stat.S_IFREG | 0o644)})
+    _fake_modes(
+        monkeypatch, tmp_path, {os.path.abspath(keyfile): (0, stat.S_IFREG | 0o644)}
+    )
     assert utils.read_user_file(keyfile, 1000, home) is not None
 
 
@@ -170,7 +184,9 @@ def test_oversized_file_is_refused(tmp_path, caplog):
 # --- key types and staleness ---------------------------------------------------
 
 
-@pytest.mark.parametrize("line", ["db_password = hunter2", "foo bar baz", 'no-pty bogus AAAA'])
+@pytest.mark.parametrize(
+    "line", ["db_password = hunter2", "foo bar baz", "no-pty bogus AAAA"]
+)
 def test_unknown_key_type_is_malformed(line):
     with pytest.raises(ValueError):
         AuthorizedKey.parse(line)

@@ -63,7 +63,10 @@ _PATTERNS = [
     ("backlog-item", re.compile(r"\bbacklog\b", re.IGNORECASE)),
     # Built via concatenation (not a literal dotted path) so this detector's
     # own source is never itself a textual match for what it detects.
-    ("private-working-dir", re.compile(r"\." + r"agents/(?:plans|findings|decisions|kb)\b")),
+    (
+        "private-working-dir",
+        re.compile(r"\." + r"agents/(?:plans|findings|decisions|kb)\b"),
+    ),
 ]
 
 # (path, substring, reason) -- a match on `path` whose offending line

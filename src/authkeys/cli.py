@@ -9,7 +9,17 @@ import json
 import logging
 import typing as _ty
 
-from duho import AUTO, Arg, Args, Choice, Cli, Cmd, CommandError, LoggingArgs, print_completion
+from duho import (
+    AUTO,
+    Arg,
+    Args,
+    Choice,
+    Cli,
+    Cmd,
+    CommandError,
+    LoggingArgs,
+    print_completion,
+)
 from duho import run as _duho_run
 
 from . import AuthKeys, AuthorizedKey, config, utils
@@ -333,4 +343,3 @@ def run(argv: "_ty.Sequence[str] | None" = None) -> int:
     if argv is None:
         argv = sys.argv[1:]
     return _duho_run(Authkeys, _with_default_command(argv), exit=False)
-

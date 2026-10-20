@@ -288,7 +288,9 @@ def test_disabled_source_is_skipped():
     StaticSource.registry.clear()
     auth = AuthKeys()
     auth.load_config(
-        _config({"source:test": {"backend": f"{__name__}.StaticSource", "enabled": "0"}})
+        _config(
+            {"source:test": {"backend": f"{__name__}.StaticSource", "enabled": "0"}}
+        )
     )
     assert list(auth.authorized_keys("alice")) == []
 
@@ -296,9 +298,7 @@ def test_disabled_source_is_skipped():
 def test_source_error_falls_back_to_expired_cache():
     StaticSource.registry.clear()
     auth = AuthKeys()
-    auth.load_config(
-        _config({"cache": {"expire": "0", "expired_on_error": "1"}})
-    )
+    auth.load_config(_config({"cache": {"expire": "0", "expired_on_error": "1"}}))
     src = StaticSource.registry["test"]
     src.keys = {"alice": [f"{RSA} x"]}
     list(auth.authorized_keys("alice"))  # populate cache (already expired at ttl=0)

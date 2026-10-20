@@ -21,11 +21,14 @@ ED = "ssh-ed25519 AAAAC3Nza"
 # --- LDAP tls_verify hardening ---------------------------------------------
 
 
-@pytest.mark.parametrize("value,expected_validate,ca_key", [
-    (None, ssl.CERT_REQUIRED, None),
-    ("system", ssl.CERT_REQUIRED, None),
-    ("none", ssl.CERT_NONE, None),
-])
+@pytest.mark.parametrize(
+    "value,expected_validate,ca_key",
+    [
+        (None, ssl.CERT_REQUIRED, None),
+        ("system", ssl.CERT_REQUIRED, None),
+        ("none", ssl.CERT_NONE, None),
+    ],
+)
 def test_ldap_tls_verify_modes(value, expected_validate, ca_key):
     pytest.importorskip("ldap3")
     from authkeys.sources.ldap import LdapAuthorizedKeys
@@ -69,7 +72,11 @@ def _auth(source_cls, extra_cache=None):
     cache = {"backend": "authkeys.cache.AuthKeysCacheMemBackend", "expire": "100"}
     cache.update(extra_cache or {})
     conf = AuthkeysConfig.from_config(
-        {"cache": cache, "globals": {}, "source:t": {"backend": f"{__name__}.{source_cls.__name__}"}}
+        {
+            "cache": cache,
+            "globals": {},
+            "source:t": {"backend": f"{__name__}.{source_cls.__name__}"},
+        }
     )
     auth = AuthKeys()
     auth.load_config(conf)
@@ -186,7 +193,10 @@ def test_http_error_falls_back_to_stale_not_cached_empty():
 def test_per_source_expire_overrides_global():
     conf = AuthkeysConfig.from_config(
         {
-            "cache": {"backend": "authkeys.cache.AuthKeysCacheMemBackend", "expire": "100"},
+            "cache": {
+                "backend": "authkeys.cache.AuthKeysCacheMemBackend",
+                "expire": "100",
+            },
             "globals": {},
             "source:t": {"backend": f"{__name__}.MixedSource", "expire": "0"},
         }

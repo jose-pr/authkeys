@@ -70,11 +70,21 @@ def test_http_username_is_url_encoded(monkeypatch):
 # --- Verify bool-or-path -----------------------------------------------------
 
 
-@pytest.mark.parametrize("value,expected", [
-    ("false", False), ("False", False), ("0", False), ("no", False), ("off", False),
-    ("true", True), ("1", True), ("yes", True), ("on", True),
-    ("/etc/pki/ca.pem", "/etc/pki/ca.pem"),
-])
+@pytest.mark.parametrize(
+    "value,expected",
+    [
+        ("false", False),
+        ("False", False),
+        ("0", False),
+        ("no", False),
+        ("off", False),
+        ("true", True),
+        ("1", True),
+        ("yes", True),
+        ("on", True),
+        ("/etc/pki/ca.pem", "/etc/pki/ca.pem"),
+    ],
+)
 def test_parse_verify(value, expected):
     assert _parse_verify(value) == expected
     assert type(_parse_verify(value)) is type(expected)
@@ -132,7 +142,10 @@ def test_concurrent_resolution_is_correct_and_lock_not_held_across_fetch():
     SlowCountingSource.instances.clear()
     conf = AuthkeysConfig.from_config(
         {
-            "cache": {"backend": "authkeys.cache.AuthKeysCacheMemBackend", "expire": "100"},
+            "cache": {
+                "backend": "authkeys.cache.AuthKeysCacheMemBackend",
+                "expire": "100",
+            },
             "globals": {},
             "source:t": {"backend": f"{__name__}.SlowCountingSource"},
         }
@@ -184,11 +197,17 @@ def test_serve_resolves_delegated_users(tmp_path, monkeypatch):
         "[authorized]\nusers =\n    alice\n    bob\n"
     )
     fake_pwd = types.ModuleType("pwd")
-    fake_pwd.getpwnam = lambda n: types.SimpleNamespace(pw_name=n, pw_dir=str(home), pw_uid=_UID)
+    fake_pwd.getpwnam = lambda n: types.SimpleNamespace(
+        pw_name=n, pw_dir=str(home), pw_uid=_UID
+    )
     monkeypatch.setitem(sys.modules, "pwd", fake_pwd)
 
     conf = AuthkeysConfig.from_config(
-        {"cache": {}, "globals": {}, "source:d": {"backend": f"{__name__}.DelegationSource"}}
+        {
+            "cache": {},
+            "globals": {},
+            "source:d": {"backend": f"{__name__}.DelegationSource"},
+        }
     )
     auth = AuthKeys()
     auth.load_config(conf)
@@ -201,9 +220,7 @@ def test_serve_resolves_delegated_users(tmp_path, monkeypatch):
 
 
 def test_invalid_expire_keeps_cache_at_default():
-    conf = AuthkeysConfig.from_config(
-        {"cache": {"expire": "1h"}, "globals": {}}
-    )
+    conf = AuthkeysConfig.from_config({"cache": {"expire": "1h"}, "globals": {}})
     auth = AuthKeys()
     auth.load_config(conf)
     assert auth.cache is not None
@@ -213,16 +230,19 @@ def test_invalid_expire_keeps_cache_at_default():
 # --- Default-command insertion -------------------------------------------
 
 
-@pytest.mark.parametrize("argv,expected", [
-    (["alice"], ["resolve", "alice"]),
-    (["-v", "alice"], ["resolve", "-v", "alice"]),
-    (["serve", "-b", "x"], ["serve", "-b", "x"]),
-    (["resolve", "alice"], ["resolve", "alice"]),
-    (["keys", "alice"], ["keys", "alice"]),
-    (["--help"], ["--help"]),
-    (["--version"], ["--version"]),
-    ([], ["resolve"]),
-])
+@pytest.mark.parametrize(
+    "argv,expected",
+    [
+        (["alice"], ["resolve", "alice"]),
+        (["-v", "alice"], ["resolve", "-v", "alice"]),
+        (["serve", "-b", "x"], ["serve", "-b", "x"]),
+        (["resolve", "alice"], ["resolve", "alice"]),
+        (["keys", "alice"], ["keys", "alice"]),
+        (["--help"], ["--help"]),
+        (["--version"], ["--version"]),
+        ([], ["resolve"]),
+    ],
+)
 def test_with_default_command(argv, expected):
     from authkeys.cli import _with_default_command
 
