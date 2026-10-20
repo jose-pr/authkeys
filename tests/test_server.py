@@ -131,3 +131,73 @@ def test_require_auth_with_set_api_key_ok():
         auth, bind="127.0.0.1", port=0, api_key="secret", require_auth=True
     )
     assert srv.check_auth(["secret"]) is True
+
+
+def _start(**options):
+    auth = AuthKeys()
+    auth.load_config(
+        AuthkeysConfig.from_config(
+            {"cache": {}, "globals": {}, "source:test": {"backend": f"{__name__}.OneKeySource"}}
+        )
+    )
+    srv = KeyServer(auth, bind="127.0.0.1", port=0, api_key="secret", **options)
+    thread = threading.Thread(target=srv.serve_forever, daemon=True)
+    thread.start()
+    return srv, thread
+
+
+def _stop(srv, thread):
+    srv.shutdown()
+    srv.server_close()
+    thread.join(timeout=2)
+
+
+def test_bearer_token_authorizes(server):
+    request = urllib.request.Request(
+        f"{server}/keys?username=alice", headers={"Authorization": "Bearer secret"}
+    )
+    with _OPENER.open(request, timeout=5) as resp:
+        assert resp.status == 200 and RSA in resp.read().decode()
+    request = urllib.request.Request(
+        f"{server}/keys?username=alice", headers={"Authorization": "Bearer wrong"}
+    )
+    with pytest.raises(urllib.error.HTTPError) as err:
+        _OPENER.open(request, timeout=5)
+    assert err.value.code == 401
+
+
+def test_request_log_has_no_query_string(server, caplog):
+    import logging
+
+    caplog.set_level(logging.INFO, logger="authkeys.server")
+    _get(f"{server}/keys?username=alice&apikey=secret")
+    lines = [r.getMessage() for r in caplog.records if r.name == "authkeys.server"]
+    assert any("GET /keys 200" in m for m in lines)
+    assert not any("secret" in m for m in lines)
+
+
+def test_idle_connection_is_closed_after_the_timeout():
+    import socket
+    import time
+
+    srv, thread = _start(request_timeout=0.5)
+    try:
+        with socket.create_connection(srv.server_address[:2], timeout=5) as sock:
+            started = time.monotonic()
+            assert sock.recv(1024) == b""
+            assert time.monotonic() - started < 4
+    finally:
+        _stop(srv, thread)
+
+
+def test_connections_over_the_limit_get_503():
+    import socket
+
+    srv, thread = _start(max_connections=1, request_timeout=5)
+    try:
+        with socket.create_connection(srv.server_address[:2], timeout=5) as idle:
+            idle.sendall(b"GET /keys")  # an incomplete request holds the only slot
+            with socket.create_connection(srv.server_address[:2], timeout=5) as second:
+                assert second.recv(64).startswith(b"HTTP/1.1 503")
+    finally:
+        _stop(srv, thread)

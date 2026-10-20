@@ -14,9 +14,12 @@ Config (``[serve]`` section)::
     port = 8090
     api_key = ${env:AUTHKEYS_APIKEY}    ; empty => auth disabled (bind locally!)
     path = /keys
+    request_timeout = 10                ; seconds a connection may stay idle
+    max_connections = 64                ; requests served at once; more get 503
 """
 
 import hmac
+import threading
 import urllib.parse
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -45,6 +48,8 @@ class KeyServer(ThreadingHTTPServer):
         path: str = "/keys",
         max_usernames: int = 16,
         require_auth: bool = False,
+        request_timeout: float = 10.0,
+        max_connections: int = 64,
     ) -> None:
         # Fail closed: when the caller asserts an api_key MUST be set (e.g. the
         # CLI, when `[serve] api_key` is present in config) but it resolved
@@ -59,7 +64,34 @@ class KeyServer(ThreadingHTTPServer):
         self.api_key = api_key or None
         self.route = "/" + path.strip("/")
         self.max_usernames = max_usernames
+        self.request_timeout = request_timeout
+        # One thread per connection: bound them, so idle or slow clients cannot
+        # exhaust the process.
+        self._slots = threading.BoundedSemaphore(max_connections)
         super().__init__((bind, port), KeyHandler)
+
+    def process_request(self, request, client_address) -> None:
+        if not self._slots.acquire(blocking=False):
+            try:
+                request.sendall(
+                    b"HTTP/1.1 503 Service Unavailable\r\n"
+                    b"Content-Length: 0\r\nConnection: close\r\n\r\n"
+                )
+            except OSError:
+                pass
+            self.shutdown_request(request)
+            return
+        try:
+            super().process_request(request, client_address)
+        except BaseException:
+            self._slots.release()
+            raise
+
+    def process_request_thread(self, request, client_address) -> None:
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self._slots.release()
 
     def check_auth(self, provided: List[str]) -> bool:
         if not self.api_key:
@@ -76,8 +108,18 @@ class KeyHandler(BaseHTTPRequestHandler):
     server: KeyServer  # type: ignore[assignment]
     server_version = "authkeys"
 
+    def setup(self) -> None:
+        # StreamRequestHandler.setup applies self.timeout to the socket.
+        self.timeout = self.server.request_timeout
+        super().setup()
+
     def log_message(self, fmt, *args):  # route logging through duho
         LOGGER.info("%s - " + fmt, self.address_string(), *args)
+
+    def log_request(self, code="-", size="-") -> None:
+        # The query string can carry the API key: log the path only.
+        path = urllib.parse.urlsplit(getattr(self, "path", "")).path
+        LOGGER.info(f"{self.address_string()} - {self.command} {path} {code}")
 
     def _send(self, data: str, status: int = 200) -> None:
         payload = data.encode("utf-8")
@@ -94,7 +136,11 @@ class KeyHandler(BaseHTTPRequestHandler):
             return
 
         query = urllib.parse.parse_qs(parsed.query)
-        if not self.server.check_auth(query.get("apikey", [])):
+        provided = list(query.get("apikey", []))
+        scheme, _, token = (self.headers.get("Authorization") or "").partition(" ")
+        if scheme.lower() == "bearer" and token.strip():
+            provided.append(token.strip())
+        if not self.server.check_auth(provided):
             LOGGER.warning("Rejected request with missing/invalid apikey")
             self._send("Not authorized", HTTPStatus.UNAUTHORIZED)
             return

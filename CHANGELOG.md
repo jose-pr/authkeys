@@ -25,6 +25,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   symbolic link, of at most 1 MiB, and it and every directory up to the home
   must be owned by the user or root and not writable by group or others. A file
   that fails is skipped with one WARNING naming the path and the reason.
+- **`serve` no longer logs the API key.** Each request is logged as the method,
+  the path without its query string, and the status. Before, the whole request
+  line, `apikey=` included, was logged at INFO, wrong guesses too.
+- `serve` closes a connection that sends nothing for `[serve] request_timeout`
+  seconds (default 10) and serves at most `[serve] max_connections` requests at
+  once (default 64); a connection over the limit gets `503` and is closed.
 
 ### Fixed
 - A cache entry that cannot be read or parsed is treated as a miss and logged,
@@ -51,6 +57,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `[cache] max_stale` (seconds): with `expired_on_error`, an entry is served
   after a source error only while it is at most `max_stale` seconds past its
   TTL. Unset (the default) keeps today's unbounded fallback.
+- `serve` accepts the API key as `Authorization: Bearer <key>` as well as the
+  `apikey` query parameter, so a client can keep it out of URLs.
+- `[serve] request_timeout` and `[serve] max_connections` (see Security).
 
 ### Changed
 - **The `duho` requirement moves to its 0.7.x series: `>=0.7.4,<0.8.0`** (was

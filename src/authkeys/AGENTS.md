@@ -182,7 +182,8 @@ model this builds on.
   logger to debug level so the resolution engine's per-source tracing
   reaches stderr.
 - **`serve`** — builds the HTTP server from `[serve]` config
-  (`bind`/`port`/`path`/`api_key`/`max_usernames`) or CLI
+  (`bind`/`port`/`path`/`api_key`/`max_usernames`/`request_timeout`/
+  `max_connections`) or CLI
   `--bind`/`--port` overrides, then blocks until interrupted. Exits `1`,
   with the message on stderr, if `[serve] api_key` is present but resolves to an empty string
   (fail closed rather than starting unauthenticated by surprise).
@@ -200,13 +201,17 @@ model this builds on.
 ## HTTP server (`authkeys.server`)
 
 - **`KeyServer(authkeys: AuthKeys, *, bind="127.0.0.1", port=8090,
-  api_key=None, path="/keys", max_usernames=16, require_auth=False)`** — a
-  threaded HTTP server. Raises `ValueError` at construction if
+  api_key=None, path="/keys", max_usernames=16, require_auth=False,
+  request_timeout=10.0, max_connections=64)`** — a threaded HTTP server. A
+  connection idle for `request_timeout` seconds is closed; past
+  `max_connections` concurrent requests a connection gets `503`. Requests are
+  logged (logger `authkeys.server`, INFO) as method, path without query, status. Raises `ValueError` at construction if
   `require_auth=True` but `api_key` is falsy (fail closed; used by the CLI
   when `[serve] api_key` is present but resolved empty).
   `check_auth(provided: list[str]) -> bool` — `True` if `api_key` is unset
   (auth disabled), else constant-time-compares against every provided key.
-- **`GET <path>?username=<u>[&username=<u2>...]&apikey=<key>`** — one or more
+- **`GET <path>?username=<u>[&username=<u2>...]&apikey=<key>`** (or the key as
+  `Authorization: Bearer <key>`) — one or more
   `username` params (bounded by `max_usernames`, else `400`); each is
   resolved through the full delegation-and-cache path and concatenated as
   sshd-wire-format lines. `401` on a missing/invalid `apikey` when auth is

@@ -180,6 +180,8 @@ class Serve(LoggingArgs, Cmd):
             path=opt("path", "/keys"),
             max_usernames=int(opt("max_usernames", 16)),
             require_auth=require_auth,
+            request_timeout=float(opt("request_timeout", 10)),
+            max_connections=int(opt("max_connections", 64)),
         )
         serve(server)
         return 0
