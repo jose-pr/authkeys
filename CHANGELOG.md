@@ -6,6 +6,78 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+This release changes the configuration file, the command line and the Python
+API. A configuration written for 0.4 does not load: convert it as below.
+
+### Changed
+- **The configuration is one TOML file, `/etc/authkeys.cfg`**, read with anycfg
+  (a new dependency). `/etc/authkeys.conf`, `/etc/authkeys/authkeys.conf` and
+  `/etc/ssh/authkeys.conf` are no longer read. Name another file with
+  `--config FILE` or the new `AUTHKEYS_CONFIG` variable (empty: no file).
+  A key authkeys does not know, or a value of the wrong type, is now a WARNING
+  naming the key; a file that does not parse is an error (status 3).
+- **The per-user delegation file is `~/.ssh/authkeys.cfg`**, TOML, with no
+  includes and no `${env.}` expansion.
+- **Sources and cache backends are chosen by name** (`backend = "file"`,
+  `"http"`, `"github"`, `"ldap"`; `[cache] backend = "memory"` or `"file"`).
+  Dotted import paths no longer work as `backend`. Other distributions add names
+  through the `authkeys.sources` and `authkeys.caches` entry-point groups.
+- **`--config`/`-c` and the logging options go before the command**:
+  `authkeys -c FILE resolve %u` or `authkeys -c FILE %u`, not
+  `authkeys resolve -c FILE %u`. `--config` takes one file, and a file named
+  there must exist (status 2). `authkeys` with no argument, and an option after
+  the user (`authkeys alice -c FILE`), are usage errors; `authkeys resolve`
+  resolves the current user.
+- `serve` takes `--path`, `--max-usernames`, `--request-timeout` and
+  `--max-connections` as well as `--bind`/`--port`, and each option can come from
+  `AUTHKEYS_SERVE_<OPTION>` (command line > variable > `[serve]` > default). A
+  malformed value is a one-line usage error (status 2) instead of a traceback.
+- `completion` needs the shell (`bash`, `zsh`, `fish`, or the new `powershell`).
+- `cache` gains `purge --dry-run` (`-n`); an unknown action is a usage error.
+- The console script calls `authkeys.cli:main` (was `authkeys.cli:run`).
+- **Python API**, renamed with no aliases kept:
+
+  | 0.4 | 0.5 |
+  | --- | --- |
+  | `authkeys.AuthkeysSource`, constructor `(conf: SectionProxy, globals)` | `authkeys.KeySource`, constructor `(options: Mapping, globals)` and an `options` class attribute |
+  | `authkeys.sources.authorizedkeys` / `AuthorizedKeysFiles` | `authkeys.sources.FileSource` (`file`) |
+  | `authkeys.sources.http` / `HttpAuthorizedKeys` | `authkeys.sources.HTTPSource` (`http`) |
+  | `authkeys.sources.github` / `GithubKeys` | `authkeys.sources.GitHubSource` (`github`) |
+  | `authkeys.sources.ldap` / `LdapAuthorizedKeys` | `authkeys.sources.LDAPSource` (`ldap`) |
+  | `authkeys.sources.ldap.only_auth_keys` | `authkeys.sources.only_auth_keys` |
+  | `authkeys.cache.AuthKeysCacheBackend` / `AuthKeysCacheMemBackend` / `AuthKeysCacheFileBackend` | `authkeys.cache.CacheBackend` / `MemoryCache` (`memory`) / `FileCache` (`file`); `from_config(options: Mapping)` |
+  | `AuthKeys.load_config(AuthkeysConfig)` | `AuthKeys.load_config(Settings)`, with `authkeys.load_settings(path)` |
+  | `AuthKeys.load_user_config(username, parser)` | `AuthKeys.load_user_config(username, Delegation)` |
+  | `authkeys.cli.Authkeys`, `authkeys.cli.run` | `authkeys.cli.AuthKeysCLI`, `authkeys.cli.main` |
+
+  Errors raised on purpose derive from `authkeys.exceptions.AuthKeysError`:
+  `ConfigError` (was `ValueError`/`FileNotFoundError` from the sources and the
+  file cache) and `SourceError` (was `RuntimeError` from the ldap source).
+
+### Removed
+- `authkeys.config.AuthkeysConfig` and its `getlist`, `SYSTEM_CONF_PATHS`,
+  `USER_CONF_PATH`, `AuthkeysConfig.CONF_PATHS`, the colon-separated `--config`
+  list, `Source.from_config`, `authkeys.utils.parse_bool`, `try_import` and
+  `call`, and the `sources` attribute aliases.
+
+### Migrating a configuration
+
+| 0.4 (`/etc/authkeys.conf`, INI) | 0.5 (`/etc/authkeys.cfg`, TOML) |
+| --- | --- |
+| `[source:files]` | `[source.files]` |
+| `backend = authkeys.sources.authorizedkeys` | `backend = "file"` (`"http"`, `"github"`, `"ldap"`) |
+| `[cache] backend = authkeys.cache.AuthKeysCacheFileBackend` | `[cache] backend = "file"` (or `"memory"`) |
+| `paths =` + one value per line | `paths = ["authorized_keys", "authorized_keys2"]` |
+| `enabled = 0`, `expired_on_error = 1` | `enabled = false`, `expired_on_error = true` |
+| `expire = 3600` | `expire = 3600` (a number, unquoted) |
+| `api_key = ${env:AUTHKEYS_APIKEY}` | `api_key = "${env.AUTHKEYS_APIKEY}"` |
+| `credentials = cert.pem,key.pem` | `credentials = ["cert.pem", "key.pem"]` |
+| `verify = false` | `verify = false` (a boolean) or `verify = "/path/ca.pem"` |
+| `~/.ssh/authkeys.conf`: `users =` + lines | `~/.ssh/authkeys.cfg`: `[authorized]` `users = ["alice", "bob"]` |
+
+Strings are quoted. `max_age` and `max_entries`, shown in the 0.4 example's
+`[cache]`, were never read: drop them (0.5 warns about unknown keys).
+
 ### Security
 - **The file cache no longer reads or writes outside its directory.** A username
   or source name that is not one plain path component (empty, `.`, `..`, or

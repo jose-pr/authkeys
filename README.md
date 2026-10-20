@@ -32,7 +32,7 @@ pip install authkeys[all]       # everything
 ```bash
 authkeys resolve alice          # print alice's authorized keys
 authkeys alice                  # 'resolve' is the default command
-authkeys serve --bind 0.0.0.0 --port 8090
+authkeys -c /etc/authkeys.cfg serve --bind 127.0.0.1 --port 8090
 ```
 
 Wire it into `sshd_config`:
@@ -48,75 +48,72 @@ account can write cache entries, and so keys.
 
 Alongside those, `authkeys check` resolves a user with per-source tracing on
 stderr (which source produced which key), `authkeys cache show|purge|warm`
-inspects and manages the on-disk cache, and `authkeys completion bash|zsh|fish`
+inspects and manages the on-disk cache, and `authkeys completion bash|zsh|fish|powershell`
 prints a shell completion script. `resolve` and `check` also take
 `--format authorized_keys|json`, where `json` emits one object per key with
 `type`, `key`, `comment`, and `options` for scripting. See the
 [CLI guide](https://jose-pr.github.io/authkeys/guide/cli/) for details.
 
 `resolve` and `check` exit `0` on success — including when no keys were found,
-which sshd reads as "no keys" — and `3` on a config or internal error, never a
-traceback.
+which sshd reads as "no keys" — `2` on a usage error and `3` on a configuration
+or internal error, never a traceback.
 
 ## Configuration
 
-authkeys reads (in order) `/etc/authkeys.conf`,
-`/etc/authkeys/authkeys.conf`, `/etc/ssh/authkeys.conf`, or a colon-separated
-list passed with `--config`. A per-user `~/.ssh/authkeys.conf` may authorize
-additional users/groups. See [`examples/authkeys.conf`](examples/authkeys.conf)
+authkeys reads one TOML file: `/etc/authkeys.cfg`, or the file named with
+`--config` (`-c`, before the command) or `AUTHKEYS_CONFIG`. `${env.NAME}` is
+replaced from the environment, and a key authkeys does not know is logged as a
+warning instead of being silently ignored. See
+[`examples/authkeys.cfg`](https://github.com/jose-pr/authkeys/blob/main/examples/authkeys.cfg)
 for a fully commented example.
 
-```ini
+```toml
 [cache]
-backend = authkeys.cache.AuthKeysCacheMemBackend
+backend = "memory"
 expire = 3600
-expired_on_error = 1
+expired_on_error = true
 
-[source:files]
-backend = authkeys.sources.authorizedkeys
-paths =
-    authorized_keys
-    authorized_keys2
+[source.files]
+backend = "file"
+paths = ["authorized_keys", "authorized_keys2"]
 
-[source:ldap]
-enabled = 1
-backend = authkeys.sources.ldap
-server = ldaps://ldap.example.com:636
-basedn = o=Example,c=US
+[source.ldap]
+backend = "ldap"
+server = "ldaps://ldap.example.com:636"
+basedn = "o=Example,c=US"
 ```
 
 ### Sources
 
-| Alias (`backend =`)                | Reads keys from                              | Extra dep |
-| ---------------------------------- | -------------------------------------------- | --------- |
-| `authkeys.sources.authorizedkeys`  | `~/.ssh/authorized_keys*` files              | —         |
-| `authkeys.sources.http`            | an HTTP URL (`{username}` templated)         | `requests` |
-| `authkeys.sources.github`          | a GitHub (or similar) `.keys` endpoint       | `requests` |
-| `authkeys.sources.ldap`            | X.509 certs in an LDAP directory             | `ldap3`, `cryptography` |
+| `backend` | Reads keys from                              | Extra |
+| --------- | -------------------------------------------- | ----- |
+| `file`    | `~/.ssh/authorized_keys*` files              | —     |
+| `http`    | an HTTP URL (`{username}` templated)         | `authkeys[http]` |
+| `github`  | a GitHub (or similar) `.keys` endpoint       | `authkeys[http]` |
+| `ldap`    | X.509 certs in an LDAP directory             | `authkeys[ldap]` |
 
-Each `[source:<name>]` section supports `enabled` and `cached` (both default
-`true`) and an optional `sanitize` callable to rewrite/drop keys.
+Each `[source.<name>]` table supports `enabled` and `cached` (both default
+`true`) and an optional `sanitize` callable to rewrite or drop keys. Other
+distributions can add sources through the `authkeys.sources` entry-point group.
 
 ### Caching
 
-- `AuthKeysCacheMemBackend` — per-process, in-memory (default).
-- `AuthKeysCacheFileBackend` — on-disk under `path`, shared across invocations.
+- `memory` — per-process, in-memory (default).
+- `file` — on disk under `path`, shared across invocations.
 
-With `expired_on_error = 1`, a source failure falls back to the last-known
+With `expired_on_error = true`, a source failure falls back to the last-known
 (expired) cached keys instead of returning nothing — useful when the SSH login
 must not be blocked by a transient LDAP/HTTP outage.
 
 ### User / group aliasing
 
-A per-user `~/.ssh/authkeys.conf` may grant other principals' keys:
+A user's `~/.ssh/authkeys.cfg` may grant other principals' keys to that user's
+account:
 
-```ini
+```toml
 [authorized]
-users =
-    alice
-    bob
-groups =
-    admins
+users = ["alice", "bob"]
+groups = ["admins"]
 ```
 
 ## HTTP key server (`authkeys serve`)
@@ -128,12 +125,14 @@ resolution over HTTP:
 GET /keys?username=alice&apikey=<key>
 ```
 
-Bind address, port, path, and API key come from the `[serve]` config section
-(or `--bind`/`--port`). The API key is compared in constant time; pull it from
-the environment with `api_key = ${env:AUTHKEYS_APIKEY}` to keep it off disk. If
+Bind address, port, path and the limits come from the `[serve]` table, from
+`AUTHKEYS_SERVE_<OPTION>` or from the command line; the API key only from
+`[serve] api_key`. It is compared in constant time and may also be sent as
+`Authorization: Bearer <key>`; pull it from the environment with
+`api_key = "${env.AUTHKEYS_APIKEY}"` to keep it off disk. If
 no API key is configured, authentication is disabled — only bind to a trusted
 interface in that case.
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT — see [LICENSE](https://github.com/jose-pr/authkeys/blob/main/LICENSE).

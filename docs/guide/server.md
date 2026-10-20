@@ -8,23 +8,29 @@ GET /keys?username=alice&apikey=<key>
 GET /keys?username=alice          (with the header  Authorization: Bearer <key>)
 ```
 
-Bind address, port, path, and API key come from the `[serve]` config section (or
-`--bind`/`--port`):
+The options come from the `[serve]` table, from `AUTHKEYS_SERVE_<OPTION>`
+variables, or from the command line (`--bind`, `--port`, `--path`,
+`--max-usernames`, `--request-timeout`, `--max-connections`); the command line
+wins, then the variable, then the file. The API key comes only from the file:
 
-```ini
+```toml
 [serve]
-bind = 127.0.0.1
+bind = "127.0.0.1"
 port = 8090
-path = /keys
-api_key = ${env:AUTHKEYS_APIKEY}
+path = "/keys"
+api_key = "${env.AUTHKEYS_APIKEY}"
 request_timeout = 10    # seconds a connection may stay idle
 max_connections = 64    # requests served at once; more get 503
+```
+
+```bash
+authkeys -c /etc/authkeys.cfg serve --bind 0.0.0.0
 ```
 
 ## Security
 
 - The API key is compared in **constant time**. Pull it from the environment with
-  `api_key = ${env:AUTHKEYS_APIKEY}` to keep it off disk.
+  `api_key = "${env.AUTHKEYS_APIKEY}"` to keep it off disk.
 - **Fail closed.** If the `api_key` line is present but resolves empty (for
   example an unset environment variable), `authkeys serve` refuses to start rather
   than silently running unauthenticated. Remove the line entirely to intentionally
@@ -41,7 +47,7 @@ max_connections = 64    # requests served at once; more get 503
 
 ## Delegation
 
-`authkeys serve` honors each user's `~/.ssh/authkeys.conf` delegation, exactly as
+`authkeys serve` honors each user's `~/.ssh/authkeys.cfg` delegation, exactly as
 `authkeys resolve` does — a request for `alice` returns the keys of everyone
 `alice` has authorized.
 
@@ -53,12 +59,12 @@ is a template unit for running `authkeys serve` as a systemd service. It sets
 hardening directives (`NoNewPrivileges=`, `ProtectSystem=strict`,
 `PrivateTmp=`, a minimal `RestrictAddressFamilies=`, dropped capabilities,
 ...), and shows both ways to supply `AUTHKEYS_APIKEY` without putting it in
-`authkeys.conf` (`Environment=`/`EnvironmentFile=`).
+`authkeys.cfg` (`Environment=`/`EnvironmentFile=`).
 
 One directive is intentionally *not* at its strictest: `ProtectHome=read-only`
 rather than fully hiding home directories. `authkeys serve` needs to read
 each delegating user's `~/.ssh` (for file-backed sources and
-`~/.ssh/authkeys.conf` delegation), so home directories must stay readable —
+`~/.ssh/authkeys.cfg` delegation), so home directories must stay readable —
 this is a deliberate trade-off, documented in the unit file itself, not an
 oversight.
 

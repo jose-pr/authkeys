@@ -7,7 +7,7 @@
 #
 # Hardening notes:
 # - `authkeys serve` needs read access to every delegating user's ~/.ssh (for
-#   authorized_keys sources and ~/.ssh/authkeys.conf delegation), so it can't
+#   authorized_keys sources and ~/.ssh/authkeys.cfg delegation), so it can't
 #   be sandboxed as tightly as a typical stateless service. Running it as a
 #   dedicated unprivileged account (DynamicUser= or a fixed User=) with that
 #   account added to a group granted read access to the relevant home
@@ -23,7 +23,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/authkeys serve --config /etc/authkeys.conf
+ExecStart=/usr/local/bin/authkeys --config /etc/authkeys.cfg serve
 
 # Identity: prefer DynamicUser for a fresh, unprivileged, unique UID/GID per
 # start. Switch to a fixed User=/Group= instead if you need a stable UID (for
@@ -33,7 +33,7 @@ DynamicUser=true
 # User=authkeys
 # Group=authkeys
 
-# Secrets: keep the API key out of the unit and out of authkeys.conf. Either
+# Secrets: keep the API key out of the unit and out of authkeys.cfg. Either
 # works; EnvironmentFile= keeps it out of `systemctl show`/process listings.
 Environment=AUTHKEYS_APIKEY=changeme
 # EnvironmentFile=/etc/authkeys/authkeys-serve.env
@@ -41,7 +41,7 @@ Environment=AUTHKEYS_APIKEY=changeme
 # Sandboxing
 NoNewPrivileges=true
 ProtectSystem=strict
-# Needed so the service can read users' ~/.ssh/{authorized_keys,authkeys.conf}
+# Needed so the service can read users' ~/.ssh/{authorized_keys,authkeys.cfg}
 # for file-backed sources and per-user delegation -- see the note above.
 ProtectHome=read-only
 PrivateTmp=true

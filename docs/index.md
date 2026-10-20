@@ -15,7 +15,7 @@ Built on the [duho](https://github.com/jose-pr/duho) declarative CLI framework.
   HTTP, or LDAP certificates behind it, mixed and matched per host.
 - **Resilient.** TTL caching with an opt-in *serve-stale-on-error* fallback keeps
   logins working through a transient LDAP/HTTP outage.
-- **Delegation.** A per-user `~/.ssh/authkeys.conf` can authorize other users' or
+- **Delegation.** A per-user `~/.ssh/authkeys.cfg` can authorize other users' or
   groups' keys.
 - **Unattended serving.** `authkeys serve` exposes the same resolution over HTTP
   for hosts that can't run the command locally.
@@ -39,7 +39,7 @@ pip install authkeys[all]       # everything
 ```bash
 authkeys resolve alice          # print alice's authorized keys
 authkeys alice                  # 'resolve' is the default command
-authkeys serve --bind 0.0.0.0 --port 8090
+authkeys -c /etc/authkeys.cfg serve --bind 127.0.0.1 --port 8090
 ```
 
 Wire it into `sshd_config`:

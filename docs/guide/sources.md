@@ -1,23 +1,25 @@
 # Key sources
 
-A source is declared as a `[source:<name>]` section. `enabled` and `cached` both
-default to `true`. An optional `sanitize` callable can rewrite or drop each key.
+A source is declared as a `[source.<name>]` table whose `backend` names its
+kind. `enabled` and `cached` both default to `true`. An optional `sanitize`
+callable (a dotted path) can rewrite or drop each key.
 
-| Alias (`backend =`)                | Reads keys from                        | Extra dep |
-| ---------------------------------- | -------------------------------------- | --------- |
-| `authkeys.sources.authorizedkeys`  | `~/.ssh/authorized_keys*` files        | —         |
-| `authkeys.sources.http`            | an HTTP URL (`{username}` templated)   | `requests` |
-| `authkeys.sources.github`          | GitHub (or similar) `.keys` endpoint   | `requests` |
-| `authkeys.sources.ldap`            | X.509 certs in an LDAP directory       | `ldap3`, `cryptography` |
+| `backend` | Reads keys from                        | Extra |
+| --------- | -------------------------------------- | ----- |
+| `file`    | `~/.ssh/authorized_keys*` files        | —     |
+| `http`    | an HTTP URL (`{username}` templated)   | `authkeys[http]` |
+| `github`  | GitHub (or similar) `.keys` endpoint   | `authkeys[http]` |
+| `ldap`    | X.509 certs in an LDAP directory       | `authkeys[ldap]` |
+
+A plugin distribution can add more names; see
+[Configuration → Plugins](configuration.md#plugins).
 
 ## File
 
-```ini
-[source:files]
-backend = authkeys.sources.authorizedkeys
-paths =
-    authorized_keys
-    authorized_keys2
+```toml
+[source.files]
+backend = "file"
+paths = ["authorized_keys", "authorized_keys2"]
 ```
 
 Reads the listed files under each user's `~/.ssh/`, skipping blank and comment
@@ -33,26 +35,26 @@ is allowed to do.
 
 ## HTTP
 
-```ini
-[source:http]
-backend = authkeys.sources.http
-address = https://keys.example.com/{username}
-# credentials = client.crt,client.key   ; optional mutual TLS
-# verify = /etc/pki/tls/certs/ca.crt     ; true/false, or a CA-bundle path
+```toml
+[source.http]
+backend = "http"
+address = "https://keys.example.com/{username}"
+# credentials = ["client.crt", "client.key"]   # optional mutual TLS
+# verify = "/etc/pki/tls/certs/ca.crt"         # true/false, or a CA-bundle path
 ```
 
 `{username}` is percent-encoded before it is substituted, so a username can never
-alter the request path or query. `verify` accepts a bool-like value
-(`true`/`false`) to toggle TLS verification, or a path to a CA bundle.
+alter the request path or query. `verify` is a boolean that toggles TLS
+verification, or the path of a CA bundle.
 
 ## GitHub
 
-```ini
-[source:github]
-backend = authkeys.sources.github
+```toml
+[source.github]
+backend = "github"
 # {username} is substituted per lookup. Defaults to GitHub; point at another
 # forge with the same `.keys` convention (e.g. GitLab) by overriding `url`:
-# url = https://gitlab.com/{username}.keys
+# url = "https://gitlab.com/{username}.keys"
 ```
 
 !!! warning "Map local names to forge accounts"
@@ -71,15 +73,15 @@ authkeys[http]`); no separate extra.
 
 ## LDAP
 
-```ini
-[source:ldap]
-backend = authkeys.sources.ldap
-server = ldaps://ldap.example.com:636
-basedn = o=Example,c=US
-username_attr = uid
-cert_attr = userCertificate
-tls_verify = system
-# cert_filter = authkeys.sources.ldap.only_auth_keys   # the default; "none" disables it
+```toml
+[source.ldap]
+backend = "ldap"
+server = "ldaps://ldap.example.com:636"
+basedn = "o=Example,c=US"
+username_attr = "uid"
+cert_attr = "userCertificate"
+tls_verify = "system"
+# cert_filter = "authkeys.sources.only_auth_keys"   # the default; "none" disables it
 ```
 
 Each matching entry's certificate is parsed and its public key serialized to
@@ -94,7 +96,7 @@ are ignored.
 
 `cert_filter` is a callable `(username, cert) -> bool | str` that drops a
 certificate (`False`) or supplies its comment (a string). The default,
-`authkeys.sources.ldap.only_auth_keys`, keeps a certificate only when it is within
+`authkeys.sources.only_auth_keys`, keeps a certificate only when it is within
 its validity period, is not self-signed, its KeyUsage (if present) allows digital
 signature, and its ExtendedKeyUsage (if present) includes clientAuth or
 anyExtendedKeyUsage: directories keep encryption, e-mail and recovery
