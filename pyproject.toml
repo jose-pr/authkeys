@@ -30,10 +30,10 @@ classifiers = [
 dependencies = ["anycfg>=0.15.0,<0.16", "duho>=0.7.4,<0.8.0"]
 
 [project.optional-dependencies]
-http = ["requests"]
+http = ["syshttp>=0.1.0,<0.2"]
 ldap = ["ldap3", "cryptography"]
-all = ["requests", "ldap3", "cryptography"]
-dev = ["black", "build", "hatchling", "pytest", "pytest-cov", "pytest-timeout", "pyyaml", "twine", "requests"]
+all = ["authkeys[http,ldap]"]
+dev = ["black", "build", "hatchling", "pytest", "pytest-cov", "pytest-timeout", "pyyaml", "twine"]
 docs = ["mkdocs", "mkdocs-material", "mkdocstrings[python]"]
 
 [project.scripts]

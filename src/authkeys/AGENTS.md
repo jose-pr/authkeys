@@ -189,16 +189,24 @@ built.
   (`paths`, default `["authorized_keys", "authorized_keys2"]`) through
   `utils.read_user_file`; `#`-comment/blank lines skipped. POSIX-only; yields
   nothing for an unknown user.
-- **`http`** — **`HTTPSource`**: GETs `address` (a `{username}` template, the
-  name percent-encoded), one key per line. `timeout` (default `10`),
-  `credentials = ["cert.pem", "key.pem"]` (mutual TLS), `verify` (a boolean or
-  a CA-bundle path). A non-2xx reply raises, so it takes the error path instead
-  of being cached as "no keys". Needs `requests` (`authkeys[http]`).
-- **`github`** — **`GitHubSource`**: GETs a forge's plain-text `.keys` endpoint
-  (`url`, a `{username}` template, default GitHub's; `timeout`). With the default
-  identity usermap local account `X` trusts the forge account `X`, which for
-  `root`, `admin`, `git` belongs to someone else: use a `usermap`. Needs
-  `requests` (`authkeys[http]`).
+- **`http`** — **`HTTPSource(options, globals, *, ssl_context=None)`**: GETs
+  `url` (a `{username}` template, the name percent-encoded), one key per line. A
+  status other than 2xx raises `SourceError` (the error path, not "no keys");
+  error messages give scheme, host and path, never the query.
+- **`github`** — **`GitHubSource(options, globals, *, ssl_context=None)`**: GETs a
+  forge's plain-text `.keys` endpoint (`url`, default
+  `https://github.com/{username}.keys`). With the default identity usermap local
+  account `X` trusts the forge account `X`, which for `root`, `admin`, `git`
+  belongs to someone else: use a `usermap`.
+  Client options (both): `timeout` (seconds per wait, default 10), `deadline`
+  (seconds for the whole request, default 15), `retries` (default 0), `verify`
+  (a boolean or a CA-bundle path; default: the OS trust store, offering no OS
+  client certificate), `certificate`/`key` (mutual TLS, through sslcontext),
+  `proxy` (a proxy URL or `"direct"`; unset: the system's proxy configuration —
+  proxy variables, else WinHTTP/macOS/libproxy, PAC and WPAD), `token_env` (the
+  variable whose value is sent as `Authorization: Bearer`). A reply over 8 MiB
+  is an error; with a certificate or token, a redirect is an error rather than
+  followed. Programmatic `ssl_context=` replaces the TLS options. Both need `authkeys[http]` (syshttp).
 - **`ldap`** — **`LDAPSource`**: an LDAPS search (`server`: `ldaps://...` or a
   bare host, `ldap://` raises `ConfigError`; `basedn`; `username_attr`, default
   `uid`) for `cert_attr` (default `userCertificate`) X.509 certs, serialized to
@@ -288,4 +296,6 @@ Built on duho (`ConfigArgs` root, `_default_subcommand_ = "resolve"`,
 | `AUTHKEYS_CONFIG` | the configuration file (empty: none) | `/etc/authkeys.cfg` |
 | `AUTHKEYS_SERVE_BIND`, `_PORT`, `_PATH`, `_MAX_USERNAMES`, `_REQUEST_TIMEOUT`, `_MAX_CONNECTIONS` | the `serve` options of the same name | the `[serve]` table, else the option's default |
 | `AUTHKEYS_MCP` | `stdio` serves the commands as MCP tools (duho) | unset |
+| the http/github source's `token_env` | that source's bearer token (**secret**) | none |
+| `HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY`, `CA_BUNDLE`, `SYSHTTP_*` | read by syshttp for the http/github sources when `proxy`/`verify` are unset | the system's configuration |
 | any name in `${env.NAME}` | that value in the system configuration (often a **secret**: `api_key`) | empty |

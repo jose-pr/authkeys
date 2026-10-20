@@ -32,6 +32,17 @@ API. A configuration written for 0.4 does not load: convert it as below.
   `--max-connections` as well as `--bind`/`--port`, and each option can come from
   `AUTHKEYS_SERVE_<OPTION>` (command line > variable > `[serve]` > default). A
   malformed value is a one-line usage error (status 2) instead of a traceback.
+- **The http and github sources use syshttp instead of requests** (the `http`
+  extra now installs syshttp). The OS trust store verifies servers (truststore
+  on Python 3.10+, instead of certifi); the system's proxy configuration (proxy
+  variables, else WinHTTP/macOS/libproxy, PAC, WPAD) routes requests unless the
+  source sets `proxy` (a URL or `"direct"`); a reply is limited to 8 MiB; a
+  `deadline` (default 15 s) bounds the whole request and `retries` defaults to 0.
+  The http source's `address` is now `url`, `credentials` is now `certificate`
+  and `key`, and both sources take `token_env` for a bearer token. With a client
+  certificate or a token, a redirect is an error instead of being followed (it
+  would carry the credential to another host). Error messages name the URL
+  without its query string.
 - `completion` needs the shell (`bash`, `zsh`, `fish`, or the new `powershell`).
 - `cache` gains `purge --dry-run` (`-n`); an unknown action is a usage error.
 - The console script calls `authkeys.cli:main` (was `authkeys.cli:run`).
@@ -71,7 +82,8 @@ API. A configuration written for 0.4 does not load: convert it as below.
 | `enabled = 0`, `expired_on_error = 1` | `enabled = false`, `expired_on_error = true` |
 | `expire = 3600` | `expire = 3600` (a number, unquoted) |
 | `api_key = ${env:AUTHKEYS_APIKEY}` | `api_key = "${env.AUTHKEYS_APIKEY}"` |
-| `credentials = cert.pem,key.pem` | `credentials = ["cert.pem", "key.pem"]` |
+| `[source:http] address = https://...` | `[source.http] url = "https://..."` |
+| `credentials = cert.pem,key.pem` | `certificate = "cert.pem"` and `key = "key.pem"` |
 | `verify = false` | `verify = false` (a boolean) or `verify = "/path/ca.pem"` |
 | `~/.ssh/authkeys.conf`: `users =` + lines | `~/.ssh/authkeys.cfg`: `[authorized]` `users = ["alice", "bob"]` |
 

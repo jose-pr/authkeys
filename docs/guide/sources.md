@@ -38,14 +38,35 @@ is allowed to do.
 ```toml
 [source.http]
 backend = "http"
-address = "https://keys.example.com/{username}"
-# credentials = ["client.crt", "client.key"]   # optional mutual TLS
-# verify = "/etc/pki/tls/certs/ca.crt"         # true/false, or a CA-bundle path
+url = "https://keys.example.com/{username}"
+# certificate = "/etc/pki/tls/certs/client.crt"   # optional mutual TLS
+# key = "/etc/pki/tls/private/client.key"
+# verify = "/etc/pki/tls/certs/ca.crt"           # true/false, or a CA-bundle path
+# proxy = "direct"                               # or a proxy URL; unset: the system's
+# token_env = "KEYSERVER_TOKEN"                  # sent as Authorization: Bearer
+# timeout = 10    deadline = 15    retries = 0
 ```
 
 `{username}` is percent-encoded before it is substituted, so a username can never
-alter the request path or query. `verify` is a boolean that toggles TLS
-verification, or the path of a CA bundle.
+alter the request path or query. Requests go through
+[syshttp](https://github.com/jose-pr/syshttp):
+
+- **TLS**: by default the operating system's trust store verifies the server
+  (and no client certificate is offered); `verify` is `false` to turn
+  verification off or the path of a CA bundle, and `certificate`/`key` add a
+  client certificate.
+- **Proxies**: unset `proxy` follows the system — the proxy variables when set,
+  else the OS configuration (WinHTTP, macOS, libproxy, PAC and WPAD).
+  `proxy = "direct"` connects directly; a URL uses that proxy.
+- **Bounds**: `timeout` limits each wait (default 10 s), `deadline` the whole
+  request (default 15 s); `retries` defaults to 0, since a login waits on it. A
+  reply larger than 8 MiB is an error.
+- **Credentials**: `token_env` names a variable whose value is sent as
+  `Authorization: Bearer <value>`, so a token need not sit in the URL. With a
+  token or a client certificate, a redirect is an error instead of being followed.
+
+A status other than 2xx is a source error: `expired_on_error` applies, and the
+log names the scheme, host and path, never the query string.
 
 ## GitHub
 
@@ -67,9 +88,9 @@ backend = "github"
 Fetches `https://github.com/{username}.keys` by default — GitHub's plain-text
 list of a user's public keys, one per line, without comments. `{username}` is
 percent-encoded before it is substituted. Since the fetched keys have no
-comment, the default `sanitize` still adds `uid(src=...)` as usual. Uses the
-same optional `requests` dependency as the `http` source (`pip install
-authkeys[http]`); no separate extra.
+comment, the default `sanitize` still adds `uid(src=...)` as usual. It takes the
+same client options as the `http` source and the same extra (`pip install
+authkeys[http]`).
 
 ## LDAP
 

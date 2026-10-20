@@ -4,7 +4,7 @@
 ``http``, ``github`` and ``ldap`` are built in; an installed distribution adds a
 source through the ``authkeys.sources`` entry-point group (``name =
 "pkg.module:Class"``, a :class:`~authkeys.KeySource` subclass). Optional
-dependencies (``syshttp``/``requests``, ``ldap3``, ``cryptography``) are imported
+dependencies (``syshttp``, ``ldap3``, ``cryptography``) are imported
 inside each source, so naming a source never fails for a missing extra until it
 is used.
 """

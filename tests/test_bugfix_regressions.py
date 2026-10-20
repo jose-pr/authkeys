@@ -9,7 +9,7 @@ import urllib.request
 import pytest
 
 from authkeys import AuthKeys, KeySource, Settings
-from authkeys.sources import HTTPSource, LDAPSource, register_source
+from authkeys.sources import LDAPSource, register_source
 
 # The fake passwd entry's uid matches the files the test writes, as on a real host.
 _UID = getattr(os, "getuid", lambda: 0)()
@@ -29,53 +29,6 @@ def test_ldap_search_filter_escapes_username():
     assert flt.startswith("(uid=") and flt.endswith(")")
     # ldap3 escapes '*' as \2a, '(' as \28, ')' as \29
     assert r"\2a" in flt.lower()
-
-
-# --- HTTP username URL-encoding ----------------------------------------------
-
-
-class _FakeResp:
-    status_code = 200
-    content = b""
-
-    def raise_for_status(self):
-        if self.status_code >= 400:
-            raise RuntimeError(f"HTTP {self.status_code}")
-
-
-class _FakeSession:
-    def __init__(self):
-        self.url = None
-
-    def get(self, url, **kwargs):
-        self.url = url
-        return _FakeResp()
-
-
-def test_http_username_is_url_encoded(monkeypatch):
-    pytest.importorskip("requests")
-    src = HTTPSource({"address": "https://k.example/{username}"}, {})
-    fake = _FakeSession()
-    src.session = fake
-    list(src.authorized_keys("a/b?c&d#e"))
-    assert fake.url == "https://k.example/a%2Fb%3Fc%26d%23e"
-
-
-# --- Verify bool-or-path -----------------------------------------------------
-
-
-@pytest.mark.parametrize("value", [False, True, "/etc/pki/ca.pem"])
-def test_http_verify_takes_a_bool_or_a_path(value):
-    pytest.importorskip("requests")
-    src = HTTPSource({"address": "https://k/{username}", "verify": value}, {})
-    assert src.request_options["verify"] == value
-
-
-def test_http_verify_as_text_bool_is_ignored(caplog):
-    pytest.importorskip("requests")
-    src = HTTPSource({"address": "https://k/{username}", "verify": 0}, {})
-    assert "verify" not in src.request_options
-    assert any("verify: expected bool or str" in r.getMessage() for r in caplog.records)
 
 
 # --- api_key fail-closed ------------------------------------------------

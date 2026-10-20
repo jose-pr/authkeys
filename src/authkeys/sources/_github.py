@@ -4,14 +4,17 @@ GitHub (and GitLab, and similar forges) publish a user's public SSH keys at a
 plain-text ``.keys`` URL, one key per line, WITHOUT comments. The ``url``
 template receives ``{username}`` and defaults to the GitHub endpoint; point it
 at ``https://gitlab.com/{username}.keys`` (or any other forge with the same
-convention) to reuse this source without a separate class.
+convention) to reuse this source without a separate class. The client options
+are those of the http source.
 """
 
+import ssl
 import urllib.parse
-from typing import Any, Iterable, Mapping
+from typing import Any, Iterable, Mapping, Optional
 
 from .. import KeySource
 from ..config import typed
+from ._client import CLIENT_OPTIONS, KeyClient
 
 _DEFAULT_URL = "https://github.com/{username}.keys"
 
@@ -19,30 +22,20 @@ _DEFAULT_URL = "https://github.com/{username}.keys"
 class GitHubSource(KeySource):
     """Keys from a forge's plain-text ``.keys`` endpoint."""
 
-    options = frozenset({"url", "timeout"})
+    options = frozenset({"url"}) | CLIENT_OPTIONS
 
-    def __init__(self, options: Mapping[str, Any], globals: dict) -> None:
-        import requests
-
+    def __init__(
+        self,
+        options: Mapping[str, Any],
+        globals: dict,
+        *,
+        ssl_context: "Optional[ssl.SSLContext]" = None,
+    ) -> None:
         self.url = typed(options, "url", str, _DEFAULT_URL, "github source")
-        self.session = requests.Session()
-        self.timeout = float(
-            typed(options, "timeout", (int, float), 10.0, "github source")
-        )
+        self.client = KeyClient(options, "github source", ssl_context=ssl_context)
 
     def authorized_keys(self, username: str) -> Iterable[str]:
-        # Percent-encode the username: it may be attacker-controlled (via
-        # `authkeys serve`) and must not alter the URL path/query.
+        # Percent-encode the username: it may come from a `serve` request and
+        # must not alter the URL path or query.
         quoted = urllib.parse.quote(username, safe="")
-        resp = self.session.get(
-            self.url.format(username=quoted),
-            timeout=self.timeout,
-        )
-        # Raise on any non-success status so a transient 5xx/403 routes through
-        # the resolver's error path (and expired_on_error) instead of being
-        # silently cached as "this user has no keys".
-        resp.raise_for_status()
-        for line in resp.content.decode().splitlines():
-            line = line.strip()
-            if line and not line.startswith("#"):
-                yield line
+        return self.client.lines(self.url.format(username=quoted))

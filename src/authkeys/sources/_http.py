@@ -1,57 +1,44 @@
 """HTTP source: fetch keys from a URL, one ``authorized_keys`` line per row.
 
-The ``address`` is a format string receiving ``{username}``. Optional mutual-TLS
-client credentials are given as ``credentials = ["cert.pem", "key.pem"]``.
-``verify`` is a boolean or a CA-bundle path. Requires the optional ``requests``
-dependency (``pip install authkeys[http]``).
+``url`` is a format string receiving ``{username}`` (percent-encoded). Client
+options: ``timeout``, ``deadline``, ``retries``, ``verify``, ``certificate``/``key``
+(mutual TLS), ``proxy`` (a URL or ``"direct"``; unset: the system's proxy
+configuration) and ``token_env`` (a variable holding a bearer token). Requires
+the ``http`` extra (``pip install authkeys[http]``: syshttp).
 """
 
+import ssl
 import urllib.parse
-from typing import Any, Iterable, Mapping
+from typing import Any, Iterable, Mapping, Optional
 
 from .. import KeySource
 from ..config import typed
 from ..exceptions import ConfigError
+from ._client import CLIENT_OPTIONS, KeyClient
 
 
 class HTTPSource(KeySource):
-    """Keys from an HTTP endpoint, one ``authorized_keys`` line per row."""
+    """Keys from an HTTP endpoint, one ``authorized_keys`` line per row.
 
-    options = frozenset({"address", "timeout", "credentials", "verify"})
+    ``ssl_context`` (programmatic use) replaces the TLS options.
+    """
 
-    def __init__(self, options: Mapping[str, Any], globals: dict) -> None:
-        import requests
+    options = frozenset({"url"}) | CLIENT_OPTIONS
 
-        where = "http source"
-        self.address = typed(options, "address", str, None, where)
-        if not self.address:
-            raise ConfigError("the http source needs an 'address'")
-        self.session = requests.Session()
-        self.timeout = float(typed(options, "timeout", (int, float), 10.0, where))
-        self.request_options: dict = {}
-        credentials = typed(options, "credentials", (list, str), None, where)
-        if isinstance(credentials, str):
-            credentials = credentials.split(",")
-        if credentials:
-            self.request_options["cert"] = tuple(str(c).strip() for c in credentials)
-        verify = typed(options, "verify", (bool, str), None, where)
-        if verify is not None:
-            self.request_options["verify"] = verify
+    def __init__(
+        self,
+        options: Mapping[str, Any],
+        globals: dict,
+        *,
+        ssl_context: "Optional[ssl.SSLContext]" = None,
+    ) -> None:
+        self.url = typed(options, "url", str, None, "http source")
+        if not self.url:
+            raise ConfigError("the http source needs a 'url'")
+        self.client = KeyClient(options, "http source", ssl_context=ssl_context)
 
     def authorized_keys(self, username: str) -> Iterable[str]:
-        # Percent-encode the username: it may be attacker-controlled (via
-        # `authkeys serve`) and must not alter the URL path/query.
+        # Percent-encode the username: it may come from a `serve` request and
+        # must not alter the URL path or query.
         quoted = urllib.parse.quote(username, safe="")
-        resp = self.session.get(
-            self.address.format(username=quoted),
-            timeout=self.timeout,
-            **self.request_options,
-        )
-        # Raise on any non-success status so a transient 5xx/403 routes through
-        # the resolver's error path (and expired_on_error) instead of being
-        # silently cached as "this user has no keys".
-        resp.raise_for_status()
-        for line in resp.content.decode().splitlines():
-            line = line.strip()
-            if line and not line.startswith("#"):
-                yield line
+        return self.client.lines(self.url.format(username=quoted))
