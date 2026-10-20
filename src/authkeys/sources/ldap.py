@@ -1,14 +1,16 @@
 """LDAP source: derive SSH keys from X.509 certificates stored in a directory.
 
 Each matching entry's ``cert_attr`` values are parsed as DER certificates; the
-public key is serialized to OpenSSH format. An optional ``cert_filter`` callable
-``(username, cert) -> bool | str`` can drop a certificate or supply a comment.
+public key is serialized to OpenSSH format. A ``cert_filter`` callable
+``(username, cert) -> bool | str`` drops a certificate or supplies a comment; it
+defaults to :func:`only_auth_keys`, and ``cert_filter = none`` keeps every one.
 
 Requires the optional ``ldap`` extra (``pip install authkeys[ldap]``:
 ``ldap3`` + ``cryptography``).
 """
 
 from configparser import SectionProxy
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Iterable, Optional, Union
 
@@ -22,15 +24,54 @@ LOGGER = logging.getLogger("authkeys.sources.ldap")
 CertFilter = Callable[[str, "object"], "Union[bool, str]"]
 
 
-def only_auth_keys(username: str, cert) -> bool:
-    """Default filter: keep certs whose KeyUsage permits digital signature."""
-    from cryptography import x509
+# LDAP result codes that mean "searched, and this is the answer": success and
+# noSuchObject (RFC 4511, Appendix A). Anything else is a failed search.
+_SEARCH_ANSWERED = (0, 32)
 
+
+def _validity(cert):
+    # cryptography 42 added the timezone-aware properties.
+    before = getattr(cert, "not_valid_before_utc", None)
+    after = getattr(cert, "not_valid_after_utc", None)
+    if before is None:
+        before = cert.not_valid_before.replace(tzinfo=timezone.utc)
+        after = cert.not_valid_after.replace(tzinfo=timezone.utc)
+    return before, after
+
+
+def only_auth_keys(username: str, cert) -> bool:
+    """Default filter: keep only certificates that are login credentials.
+
+    A certificate is kept when it is within its validity period, is not
+    self-signed, its KeyUsage (when present) permits digital signature, and its
+    ExtendedKeyUsage (when present) includes clientAuth or anyExtendedKeyUsage.
+    Directories also hold encryption, e-mail and recovery certificates in the
+    same attribute; those must not become SSH keys.
+    """
+    from cryptography import x509
+    from cryptography.x509.oid import ExtendedKeyUsageOID
+
+    before, after = _validity(cert)
+    if not before <= datetime.now(timezone.utc) <= after:
+        return False
+    if cert.issuer == cert.subject:
+        return False
     try:
-        usage = cert.extensions.get_extension_for_class(x509.KeyUsage)
+        usage = cert.extensions.get_extension_for_class(x509.KeyUsage).value
     except x509.ExtensionNotFound:
-        return True
-    return not usage or usage.value.digital_signature
+        usage = None
+    if usage is not None and not usage.digital_signature:
+        return False
+    try:
+        purposes = cert.extensions.get_extension_for_class(x509.ExtendedKeyUsage).value
+    except x509.ExtensionNotFound:
+        purposes = None
+    if purposes is not None and not (
+        ExtendedKeyUsageOID.CLIENT_AUTH in purposes
+        or ExtendedKeyUsageOID.ANY_EXTENDED_KEY_USAGE in purposes
+    ):
+        return False
+    return True
 
 
 class LdapAuthorizedKeys(AuthkeysSource):
@@ -45,12 +86,25 @@ class LdapAuthorizedKeys(AuthkeysSource):
         self.tls_verify = conf.get("tls_verify", None)
         self.timeout = conf.getfloat("timeout", 10.0)
         self.server = conf.get("server", None)
+        # ldap3 lets an ldap:// URL override use_ssl, which would send the search
+        # (and so the answer that decides who logs in) in clear text.
+        if self.server and self.server.strip().lower().startswith("ldap://"):
+            raise ValueError(
+                "ldap source 'server' must be an ldaps:// URL or a host name, "
+                "not ldap://"
+            )
         self.basedn = conf.get("basedn", "")
         self.cert_attr = conf.get("cert_attr", "userCertificate")
         self.username_attr = conf.get("username_attr", "uid")
+        # Default only_auth_keys; "none" keeps every certificate in the attribute.
         cert_filter: "Optional[Union[str, CertFilter]]" = conf.get("cert_filter", None)
-        if isinstance(cert_filter, str):
-            cert_filter = utils.import_module_object(cert_filter)
+        if cert_filter is None:
+            cert_filter = only_auth_keys
+        elif isinstance(cert_filter, str):
+            if cert_filter.strip().lower() == "none":
+                cert_filter = None
+            else:
+                cert_filter = utils.import_module_object(cert_filter)
         self.cert_filter = cert_filter
 
     def _tls_kwargs(self) -> dict:
@@ -112,14 +166,30 @@ class LdapAuthorizedKeys(AuthkeysSource):
             server=server, auto_bind=True, receive_timeout=self.timeout
         )
         try:
-            found = conn.search(
+            conn.search(
                 self.basedn,
                 self._search_filter(username),
                 attributes=[self.cert_attr],
             )
-            if not found or not conn.response:
+            # search() is False both for "no match" and for a refused search; only
+            # the result code tells them apart, and a refusal must reach the
+            # resolver's error path instead of being cached as "no keys".
+            result = conn.result.get("result")
+            if result not in _SEARCH_ANSWERED:
+                raise RuntimeError(
+                    f"LDAP search failed: {conn.result.get('description')} ({result})"
+                )
+            # Search references (referrals) sit in the same list as entries.
+            entries = [
+                r for r in (conn.response or []) if r.get("type") == "searchResEntry"
+            ]
+            if not entries:
                 return
-            for raw in conn.response[0]["raw_attributes"][self.cert_attr]:
+            if len(entries) > 1:
+                raise RuntimeError(
+                    f"LDAP search for {username!r} matched {len(entries)} entries"
+                )
+            for raw in entries[0]["raw_attributes"].get(self.cert_attr, []):
                 cert = x509.load_der_x509_certificate(raw)
                 comment: "Union[bool, str, None]" = None
                 if self.cert_filter:

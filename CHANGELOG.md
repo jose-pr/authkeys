@@ -31,6 +31,21 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `serve` closes a connection that sends nothing for `[serve] request_timeout`
   seconds (default 10) and serves at most `[serve] max_connections` requests at
   once (default 64); a connection over the limit gets `503` and is closed.
+- **A refused LDAP search is an error, not "no keys".** ldap3 returns the same
+  `False` for "no match" and for a search the server refused (a missing bind,
+  an expired password, missing rights); the source now checks the result code,
+  so a refusal goes through the error path and `expired_on_error` instead of
+  being cached over the user's last good keys as an empty result.
+- **The ldap source refuses an `ldap://` server URL.** ldap3 lets the URL's
+  scheme override `use_ssl`, so `ldap://` silently sent the search in clear text
+  and ignored `tls_verify`. Use `ldaps://` or a bare host name.
+- **The ldap source applies a certificate filter by default.** Before, no filter
+  ran unless `cert_filter` was set, and every certificate in the attribute
+  became a key, encryption and recovery certificates included. The default is
+  now `authkeys.sources.ldap.only_auth_keys`, which keeps a certificate only when
+  it is within its validity period, is not self-signed, its KeyUsage (if any)
+  allows digital signature and its ExtendedKeyUsage (if any) includes clientAuth
+  or anyExtendedKeyUsage. `cert_filter = none` keeps every certificate.
 
 ### Fixed
 - A cache entry that cannot be read or parsed is treated as a miss and logged,
@@ -38,6 +53,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - A failed cache write (a full or read-only disk) is a WARNING; the keys the
   source returned are still printed. Before, they were discarded and the
   resolver fell back to expired keys or to none.
+- The ldap source reads only directory entries from a search answer: an Active
+  Directory search returns referrals beside the entries, and a referral first in
+  the list raised `KeyError` for every unknown user. A search matching more than
+  one entry is now an error rather than the first entry's keys.
 - No "No config file found" WARNING is logged for a user without
   `~/.ssh/authkeys.conf`; that file is optional. The warning remains for the
   configuration named by `--config` or the system paths.

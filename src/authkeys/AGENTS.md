@@ -147,10 +147,15 @@ section; each is also importable directly as its real class.
   are the **client** mTLS credentials; `tls_verify` controls **server**
   verification: `none` (insecure, warns), `system`/unset (OS trust store —
   verification is **on** by default), or a file/dir path (CA bundle/dir).
-  The username is filter-escaped against LDAP injection. Optional
-  `cert_filter: (username, cert) -> bool | str` (a dotted path or callable)
-  — `False` drops the cert, a `str` supplies its comment; the default filter
-  keeps certs whose key usage permits digital signatures. Requires `ldap3` +
+  `server` must be `ldaps://...` or a bare host (`ldap://` raises `ValueError`).
+  The username is filter-escaped against LDAP injection. A search the server
+  refuses (result code other than 0/32) raises `RuntimeError`; referrals are
+  ignored; more than one matching entry raises. `cert_filter: (username, cert)
+  -> bool | str` (a dotted path or callable; `none` disables it) — `False` drops
+  the cert, a `str` supplies its comment; default
+  `authkeys.sources.ldap.only_auth_keys`: keeps a cert within its validity
+  period, not self-signed, KeyUsage (if present) with digitalSignature, EKU (if
+  present) with clientAuth or anyExtendedKeyUsage. Requires `ldap3` +
   `cryptography` (`authkeys[ldap]`), imported lazily.
 - **`github`** (`sources/github.py`) — GETs a forge's plain-text `.keys`
   endpoint (`url`, `{username}`-templated, default GitHub's; point it at
