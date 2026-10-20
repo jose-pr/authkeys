@@ -3,14 +3,42 @@
 Entries are keyed by ``(uid, source_name)`` and store the serialized keys plus a
 timestamp. :class:`AuthKeysCache` applies the TTL; backends only persist and
 retrieve ``(value, timestamp)`` pairs.
+
+Backends are found by name: ``memory`` and ``file`` are built in, and an installed
+distribution adds one through the ``authkeys.caches`` entry-point group.
 """
 
 import os
 from pathlib import Path
 from time import time
-from typing import Iterable, Optional, Set, Tuple
+from typing import (
+    Any,
+    ClassVar,
+    Dict,
+    FrozenSet,
+    Iterable,
+    Mapping,
+    Optional,
+    Set,
+    Tuple,
+    Type,
+)
 
 from duho import logging
+
+from .exceptions import ConfigError
+
+__all__ = [
+    "AuthKeysCache",
+    "CacheBackend",
+    "CacheEntry",
+    "CacheKey",
+    "FileCache",
+    "MemoryCache",
+    "cache_names",
+    "get_cache",
+    "register_cache",
+]
 
 LOGGER = logging.getLogger("authkeys.cache")
 
@@ -20,8 +48,11 @@ CacheKey = Tuple[str, str]
 CacheEntry = Tuple[str, float]
 
 
-class AuthKeysCacheBackend:
+class CacheBackend:
     """Persist ``(value, timestamp)`` pairs keyed by :data:`CacheKey`.
+
+    ``options`` names the ``[cache]`` keys a backend reads besides the shared ones;
+    any other key is reported as unknown.
 
     Enumeration/deletion (``keys``/``__delitem__``/``sweep``) are optional; a
     backend that can't support them (e.g. an in-memory one across processes)
@@ -29,8 +60,11 @@ class AuthKeysCacheBackend:
     the limitation gracefully.
     """
 
+    options: ClassVar[FrozenSet[str]] = frozenset()
+
     @classmethod
-    def from_config(cls, config) -> "AuthKeysCacheBackend":
+    def from_config(cls, options: Mapping[str, Any]) -> "CacheBackend":
+        """Build the backend from the ``[cache]`` keys in :attr:`options`."""
         return cls()
 
     def __getitem__(self, key: CacheKey) -> "Optional[CacheEntry]":  # pragma: no cover
@@ -68,7 +102,9 @@ class AuthKeysCacheBackend:
         return removed
 
 
-class AuthKeysCacheMemBackend(AuthKeysCacheBackend):
+class MemoryCache(CacheBackend):
+    """Per-process dictionary; nothing survives the process."""
+
     def __init__(self) -> None:
         self.db: "dict[CacheKey, CacheEntry]" = {}
 
@@ -99,7 +135,7 @@ def _check_component(what: str, name: str) -> None:
         raise ValueError(f"cache {what} is not a plain name: {name!r}")
 
 
-class AuthKeysCacheFileBackend(AuthKeysCacheBackend):
+class FileCache(CacheBackend):
     """Cache keys under ``<path>/<source>/<uid>``; mtime is the timestamp.
 
     On POSIX an entry, its source directory or the root that is not owned by the
@@ -132,15 +168,19 @@ class AuthKeysCacheFileBackend(AuthKeysCacheBackend):
         root = os.path.abspath(self.path)
         return os.path.commonpath([root, os.path.abspath(path)]) == root
 
+    options: ClassVar[FrozenSet[str]] = frozenset({"path"})
+
     @classmethod
-    def from_config(cls, config) -> "AuthKeysCacheFileBackend":
-        for path in config.getlist("path", []):
+    def from_config(cls, options: Mapping[str, Any]) -> "FileCache":
+        """Use the first existing directory of ``path`` (a path or a list of them)."""
+        paths = options.get("path", [])
+        if isinstance(paths, str):
+            paths = [paths]
+        for path in paths:
             path = Path(path)
             if path.exists():
                 return cls(path)
-        raise FileNotFoundError(
-            "No existing cache 'path' configured for the file cache backend"
-        )
+        raise ConfigError("cache.path names no existing directory for the file cache")
 
     def cached_entry_path(self, key: CacheKey) -> "Optional[Path]":
         """Return the entry's path, creating its source directory.
@@ -231,7 +271,7 @@ class AuthKeysCache:
 
     def __init__(
         self,
-        backend: AuthKeysCacheBackend,
+        backend: CacheBackend,
         ttl: int = 1,
         negative_ttl: "Optional[int]" = None,
         max_stale: "Optional[int]" = None,
@@ -278,3 +318,47 @@ class AuthKeysCache:
     def __setitem__(self, key: CacheKey, value: str) -> None:
         # Empty string => negative (known-empty) entry with the negative TTL.
         self.set(key, value, negative=(value == ""))
+
+
+_CACHES: "Dict[str, Type[CacheBackend]]" = {}
+_PLUGINS_LOADED = False
+
+
+def register_cache(name: str, cls: "Type[CacheBackend]") -> "Type[CacheBackend]":
+    """Register a cache backend under ``name``; a name taken by another class is a
+    ``ValueError``. Returns ``cls``."""
+    if _CACHES.get(name, cls) is not cls:
+        raise ValueError(f"cache backend {name!r} is already registered")
+    _CACHES[name] = cls
+    return cls
+
+
+def _load_plugins() -> None:
+    global _PLUGINS_LOADED
+    if _PLUGINS_LOADED:
+        return
+    _PLUGINS_LOADED = True
+    from ._plugins import load_entry_points
+
+    load_entry_points("authkeys.caches", _CACHES, CacheBackend)
+
+
+def cache_names() -> "Tuple[str, ...]":
+    """The registered cache backend names, sorted."""
+    _load_plugins()
+    return tuple(sorted(_CACHES))
+
+
+def get_cache(name: str) -> "Type[CacheBackend]":
+    """The cache backend registered as ``name``; ``ConfigError`` listing the names."""
+    _load_plugins()
+    try:
+        return _CACHES[name]
+    except KeyError:
+        raise ConfigError(
+            f"unknown cache backend {name!r}; registered: {', '.join(cache_names())}"
+        ) from None
+
+
+register_cache("memory", MemoryCache)
+register_cache("file", FileCache)

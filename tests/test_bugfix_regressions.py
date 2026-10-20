@@ -8,9 +8,8 @@ import urllib.request
 
 import pytest
 
-from authkeys import AuthKeys, AuthkeysConfig, AuthkeysSource
-from authkeys.server import KeyServer
-from authkeys.sources.http import HttpAuthorizedKeys, _parse_verify
+from authkeys import AuthKeys, KeySource, Settings
+from authkeys.sources import HTTPSource, LDAPSource, register_source
 
 # The fake passwd entry's uid matches the files the test writes, as on a real host.
 _UID = getattr(os, "getuid", lambda: 0)()
@@ -22,11 +21,8 @@ RSA = "ssh-rsa AAAAB3Nza alice@host"
 
 
 def test_ldap_search_filter_escapes_username():
-    ldap3 = pytest.importorskip("ldap3")
-    from authkeys.sources.ldap import LdapAuthorizedKeys
-
-    conf = AuthkeysConfig.from_config({"source:ldap": {"username_attr": "uid"}})
-    src = LdapAuthorizedKeys(conf["source:ldap"], {})
+    pytest.importorskip("ldap3")
+    src = LDAPSource({"username_attr": "uid"}, {})
     flt = src._search_filter("*)(uid=*")
     # The injection metacharacters must be escaped, not passed through literally.
     assert "*)(uid=*" not in flt
@@ -57,10 +53,8 @@ class _FakeSession:
 
 
 def test_http_username_is_url_encoded(monkeypatch):
-    conf = AuthkeysConfig.from_config(
-        {"source:http": {"address": "https://k.example/{username}"}}
-    )
-    src = HttpAuthorizedKeys(conf["source:http"], {})
+    pytest.importorskip("requests")
+    src = HTTPSource({"address": "https://k.example/{username}"}, {})
     fake = _FakeSession()
     src.session = fake
     list(src.authorized_keys("a/b?c&d#e"))
@@ -70,61 +64,46 @@ def test_http_username_is_url_encoded(monkeypatch):
 # --- Verify bool-or-path -----------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    "value,expected",
-    [
-        ("false", False),
-        ("False", False),
-        ("0", False),
-        ("no", False),
-        ("off", False),
-        ("true", True),
-        ("1", True),
-        ("yes", True),
-        ("on", True),
-        ("/etc/pki/ca.pem", "/etc/pki/ca.pem"),
-    ],
-)
-def test_parse_verify(value, expected):
-    assert _parse_verify(value) == expected
-    assert type(_parse_verify(value)) is type(expected)
+@pytest.mark.parametrize("value", [False, True, "/etc/pki/ca.pem"])
+def test_http_verify_takes_a_bool_or_a_path(value):
+    pytest.importorskip("requests")
+    src = HTTPSource({"address": "https://k/{username}", "verify": value}, {})
+    assert src.request_options["verify"] == value
 
 
-def test_http_verify_false_disables_verification():
-    conf = AuthkeysConfig.from_config(
-        {"source:http": {"address": "https://k/{username}", "verify": "false"}}
-    )
-    src = HttpAuthorizedKeys(conf["source:http"], {})
-    assert src.options["verify"] is False
+def test_http_verify_as_text_bool_is_ignored(caplog):
+    pytest.importorskip("requests")
+    src = HTTPSource({"address": "https://k/{username}", "verify": 0}, {})
+    assert "verify" not in src.request_options
+    assert any("verify: expected bool or str" in r.getMessage() for r in caplog.records)
 
 
 # --- api_key fail-closed ------------------------------------------------
 
 
 def _serve_argv(config_text, tmp_path):
-    p = tmp_path / "ak.conf"
+    p = tmp_path / "ak.cfg"
     p.write_text(config_text)
-    from authkeys.cli import run
+    from authkeys.cli import main
 
-    return run(["serve", "--config", str(p), "--port", "0"])
+    return main(["--config", str(p), "serve", "--port", "0"])
 
 
-def test_serve_fails_closed_on_empty_api_key(tmp_path, monkeypatch, capsys):
+def test_serve_fails_closed_on_empty_api_key(tmp_path, monkeypatch, capsys, caplog):
     monkeypatch.delenv("AUTHKEYS_TEST_KEY", raising=False)
-    rc = _serve_argv("[serve]\napi_key = ${env:AUTHKEYS_TEST_KEY}\n", tmp_path)
-    captured = capsys.readouterr()
+    rc = _serve_argv('[serve]\napi_key = "${env.AUTHKEYS_TEST_KEY}"\n', tmp_path)
     assert rc == 1
-    assert captured.out == ""
-    assert "'api_key' is configured" in captured.err
+    assert capsys.readouterr().out == ""
+    assert any("'api_key' is configured" in r.getMessage() for r in caplog.records)
 
 
 # --- Thread-safe cache (contract: correct + non-blocking, NOT fetch-dedup) ---
 
 
-class SlowCountingSource(AuthkeysSource):
+class SlowCountingSource(KeySource):
     instances = []
 
-    def __init__(self, conf, globals):
+    def __init__(self, options, globals):
         self.calls = 0
         SlowCountingSource.instances.append(self)
 
@@ -134,20 +113,19 @@ class SlowCountingSource(AuthkeysSource):
         return [RSA]
 
 
+register_source("test-bugfix-slow", SlowCountingSource)
+
+
 def test_concurrent_resolution_is_correct_and_lock_not_held_across_fetch():
     # The lock guards only the cache read/write, NOT the upstream fetch, so one
     # slow source can't stall other users' logins. Concurrent cold requests are
     # correctness-safe (all return the right keys); fetch dedup is deliberately
     # NOT guaranteed (that was traded away for availability).
     SlowCountingSource.instances.clear()
-    conf = AuthkeysConfig.from_config(
+    conf = Settings.from_mapping(
         {
-            "cache": {
-                "backend": "authkeys.cache.AuthKeysCacheMemBackend",
-                "expire": "100",
-            },
-            "globals": {},
-            "source:t": {"backend": f"{__name__}.SlowCountingSource"},
+            "cache": {"backend": "memory", "expire": 100},
+            "source": {"t": {"backend": "test-bugfix-slow"}},
         }
     )
     auth = AuthKeys()
@@ -176,25 +154,25 @@ def test_concurrent_resolution_is_correct_and_lock_not_held_across_fetch():
 # --- Serve honors per-user delegation -----------------------------------
 
 
-class DelegationSource(AuthkeysSource):
+class DelegationSource(KeySource):
     keys = {"alice": ["ssh-rsa AAAAalice a"], "bob": ["ssh-rsa AAAAbob b"]}
-
-    def __init__(self, conf, globals):
-        pass
 
     def authorized_keys(self, username):
         return list(self.keys.get(username, []))
 
 
+register_source("test-bugfix-delegation", DelegationSource)
+
+
 def test_serve_resolves_delegated_users(tmp_path, monkeypatch):
-    # alice's ~/.ssh/authkeys.conf authorizes bob too.
+    # alice's ~/.ssh/authkeys.cfg authorizes bob too.
     import sys
     import types
 
     home = tmp_path / "alice"
     (home / ".ssh").mkdir(parents=True)
-    (home / ".ssh" / "authkeys.conf").write_text(
-        "[authorized]\nusers =\n    alice\n    bob\n"
+    (home / ".ssh" / "authkeys.cfg").write_text(
+        '[authorized]\nusers = ["alice", "bob"]\n'
     )
     fake_pwd = types.ModuleType("pwd")
     fake_pwd.getpwnam = lambda n: types.SimpleNamespace(
@@ -202,12 +180,8 @@ def test_serve_resolves_delegated_users(tmp_path, monkeypatch):
     )
     monkeypatch.setitem(sys.modules, "pwd", fake_pwd)
 
-    conf = AuthkeysConfig.from_config(
-        {
-            "cache": {},
-            "globals": {},
-            "source:d": {"backend": f"{__name__}.DelegationSource"},
-        }
+    conf = Settings.from_mapping(
+        {"source": {"d": {"backend": "test-bugfix-delegation"}}}
     )
     auth = AuthKeys()
     auth.load_config(conf)
@@ -220,7 +194,7 @@ def test_serve_resolves_delegated_users(tmp_path, monkeypatch):
 
 
 def test_invalid_expire_keeps_cache_at_default():
-    conf = AuthkeysConfig.from_config({"cache": {"expire": "1h"}, "globals": {}})
+    conf = Settings.from_mapping({"cache": {"expire": "1h"}})
     auth = AuthKeys()
     auth.load_config(conf)
     assert auth.cache is not None
@@ -231,19 +205,24 @@ def test_invalid_expire_keeps_cache_at_default():
 
 
 @pytest.mark.parametrize(
-    "argv,expected",
+    "argv,username",
     [
-        (["alice"], ["resolve", "alice"]),
-        (["-v", "alice"], ["resolve", "-v", "alice"]),
-        (["serve", "-b", "x"], ["serve", "-b", "x"]),
-        (["resolve", "alice"], ["resolve", "alice"]),
-        (["keys", "alice"], ["keys", "alice"]),
-        (["--help"], ["--help"]),
-        (["--version"], ["--version"]),
-        ([], ["resolve"]),
+        (["alice"], "alice"),
+        (["-v", "alice"], "alice"),
+        (["resolve", "alice"], "alice"),
+        (["keys", "alice"], "alice"),
+        (["--config", "{cfg}", "alice"], "alice"),
     ],
 )
-def test_with_default_command(argv, expected):
-    from authkeys.cli import _with_default_command
+def test_resolve_is_the_default_command(argv, username, monkeypatch, tmp_path):
+    from authkeys.cli import main
+    from authkeys.cli.resolve import Resolve
 
-    assert _with_default_command(argv) == expected
+    cfg = tmp_path / "a.cfg"
+    cfg.write_text("")
+    seen = []
+    monkeypatch.setattr(
+        Resolve, "__call__", lambda self: seen.append(self.username) or 0
+    )
+    assert main([a.replace("{cfg}", str(cfg)) for a in argv]) == 0
+    assert seen == [username]

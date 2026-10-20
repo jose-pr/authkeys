@@ -27,17 +27,17 @@ classifiers = [
     "Topic :: System :: Systems Administration :: Authentication/Directory",
     "Typing :: Typed",
 ]
-dependencies = ["duho>=0.7.4,<0.8.0"]
+dependencies = ["anycfg>=0.15.0,<0.16", "duho>=0.7.4,<0.8.0"]
 
 [project.optional-dependencies]
 http = ["requests"]
 ldap = ["ldap3", "cryptography"]
 all = ["requests", "ldap3", "cryptography"]
-dev = ["black", "build", "hatchling", "pytest", "pytest-cov", "pytest-timeout", "twine", "requests"]
+dev = ["black", "build", "hatchling", "pytest", "pytest-cov", "pytest-timeout", "pyyaml", "twine", "requests"]
 docs = ["mkdocs", "mkdocs-material", "mkdocstrings[python]"]
 
 [project.scripts]
-authkeys = "authkeys.cli:run"
+authkeys = "authkeys.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/jose-pr/authkeys/"

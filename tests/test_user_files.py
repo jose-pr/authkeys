@@ -2,7 +2,6 @@
 under sshd-like StrictModes checks, get no environment expansion, and a grant ends
 when its file does. Also: key-type validation, `%` in values, `max_stale`."""
 
-import configparser
 import os
 import stat
 import time
@@ -11,14 +10,16 @@ from pathlib import Path
 
 import pytest
 
-from authkeys import AuthKeys, AuthkeysConfig, AuthkeysSource, AuthorizedKey, Source
-from authkeys import _describe_config_error, utils
-from authkeys.cache import AuthKeysCache, AuthKeysCacheMemBackend
+from authkeys import AuthKeys, AuthorizedKey, KeySource, Source
+from authkeys import utils
+from authkeys.config import USER_CONFIG, load_settings, parse_delegation
+from authkeys.exceptions import ConfigError
+from authkeys.cache import AuthKeysCache, MemoryCache
 
 ED = "ssh-ed25519 AAAAC3Nza"
 
 
-class Keys(AuthkeysSource):
+class Keys(KeySource):
     def __init__(self, keys):
         self.keys = keys
 
@@ -43,7 +44,7 @@ def _auth(tmp_path, keys, monkeypatch):
             cached=False, enabled=True, backend=Keys(keys), sanitize=None, expire=None
         )
     }
-    conf = tmp_path / "authkeys.conf"
+    conf = tmp_path / "authkeys.cfg"
     auth.user_config_path = lambda username: conf
     return auth, conf
 
@@ -51,19 +52,19 @@ def _auth(tmp_path, keys, monkeypatch):
 def test_delegation_file_gets_no_environment(tmp_path, monkeypatch, caplog):
     monkeypatch.setenv("AUTHKEYS_APIKEY", "TOPSECRET")
     auth, conf = _auth(tmp_path, {}, monkeypatch)
-    conf.write_text("[authorized]\nusers = ${env:AUTHKEYS_APIKEY}\n")
+    conf.write_text('[authorized]\nusers = ["${env.AUTHKEYS_APIKEY}"]\n')
     auth.resolve("mallory")
-    assert auth.users["mallory"].authorized_users == ["${env:AUTHKEYS_APIKEY}"]
+    assert auth.users["mallory"].authorized_users == ["${env.AUTHKEYS_APIKEY}"]
     assert not any("TOPSECRET" in r.getMessage() for r in caplog.records)
 
 
 def test_grant_ends_when_the_file_breaks_or_goes(tmp_path, monkeypatch):
     auth, conf = _auth(tmp_path, {"bob": [f"{ED} bob@x"]}, monkeypatch)
-    conf.write_text("[authorized]\nusers = bob\n")
+    conf.write_text('[authorized]\nusers = ["bob"]\n')
     assert [k.key for k in auth.resolve("alice")] == ["AAAAC3Nza"]
-    conf.write_text("users = bob\n")  # no section header
+    conf.write_text("users = [bob\n")  # not TOML
     assert auth.resolve("alice") == []
-    conf.write_text("[authorized]\nusers = bob\n")
+    conf.write_text('[authorized]\nusers = ["bob"]\n')
     auth.resolve("alice")
     conf.unlink()
     assert auth.resolve("alice") == []
@@ -82,19 +83,18 @@ def test_broken_delegation_file_is_named_by_line_not_content(
     conf.write_text("secret line one\n")
     auth.resolve("alice")
     messages = [r.getMessage() for r in caplog.records]
-    assert any("MissingSectionHeaderError at line 1" in m for m in messages)
+    assert any("at line 1" in m for m in messages)
     assert not any("secret line" in m for m in messages)
 
 
-def test_describe_config_error_never_quotes_text():
-    with pytest.raises(configparser.Error) as info:
-        AuthkeysConfig.from_config(b"[authorized]\nusers = a\nnot an option line\n")
-    assert "not an option" not in _describe_config_error(info.value)
+def test_delegation_error_never_quotes_text():
+    with pytest.raises(ConfigError) as info:
+        parse_delegation('[authorized]\nusers = ["a"]\nnot an option line\n')
+    assert "not an option" not in str(info.value)
 
 
-def test_percent_in_a_value_is_data():
-    conf = AuthkeysConfig.from_config(b"[serve]\napi_key = abc%def\n")
-    assert conf["serve"]["api_key"] == "abc%def"
+def test_user_config_is_the_cfg_file():
+    assert USER_CONFIG.as_posix() == ".ssh/authkeys.cfg"
 
 
 # --- StrictModes-like checks ---------------------------------------------------
@@ -199,7 +199,7 @@ def test_certificate_key_type_is_accepted():
 
 @pytest.mark.parametrize("max_stale,served", [(None, True), (100, False), (2000, True)])
 def test_max_stale_bounds_expired_fallback(max_stale, served):
-    backend = AuthKeysCacheMemBackend()
+    backend = MemoryCache()
     cache = AuthKeysCache(backend, ttl=10, max_stale=max_stale)
     backend.db[("bob", "s")] = (f"{ED} bob", time.time() - 1000)
     assert cache.get(("bob", "s")) is None

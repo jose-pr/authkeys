@@ -3,6 +3,8 @@
 A usermap has the signature ``(name, source_name, source) -> str``.
 """
 
+__all__ = ["none"]
+
 
 def none(name: str, src_name: str, src) -> str:
     """Identity map: use the username unchanged for every source."""

@@ -9,14 +9,15 @@ Requires the optional ``ldap`` extra (``pip install authkeys[ldap]``:
 ``ldap3`` + ``cryptography``).
 """
 
-from configparser import SectionProxy
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable, Iterable, Optional, Union
+from typing import Any, Callable, Iterable, Mapping, Optional, Union
 
 from duho import logging
 
-from .. import AuthkeysSource, utils
+from .. import KeySource, utils
+from ..config import typed
+from ..exceptions import ConfigError, SourceError
 
 LOGGER = logging.getLogger("authkeys.sources.ldap")
 
@@ -74,37 +75,59 @@ def only_auth_keys(username: str, cert) -> bool:
     return True
 
 
-class LdapAuthorizedKeys(AuthkeysSource):
-    def __init__(self, conf: SectionProxy, globals) -> None:
+class LDAPSource(KeySource):
+    """Keys derived from X.509 certificates stored in an LDAP directory."""
+
+    options = frozenset(
+        {
+            "server",
+            "basedn",
+            "cert_attr",
+            "username_attr",
+            "tls_cert",
+            "tls_key",
+            "tls_verify",
+            "timeout",
+            "cert_filter",
+        }
+    )
+
+    def __init__(self, options: Mapping[str, Any], globals: dict) -> None:
+        where = "ldap source"
         # tls_cert/tls_key are the *client* mutual-TLS credentials (not server
         # verification). Server verification is controlled by tls_verify below.
-        self.tls_cert = conf.get("tls_cert", "/etc/pki/tls/certs/server.crt")
-        self.tls_key = conf.get("tls_key", "/etc/pki/tls/private/server.key")
+        self.tls_cert = typed(
+            options, "tls_cert", str, "/etc/pki/tls/certs/server.crt", where
+        )
+        self.tls_key = typed(
+            options, "tls_key", str, "/etc/pki/tls/private/server.key", where
+        )
         # tls_verify: 'none' (insecure opt-out), 'system'/unset (verify against the
         # OS trust store), or a path (file -> CA bundle, dir -> CA directory).
         # Default is to VERIFY -- an unverified LDAPS channel decides who logs in.
-        self.tls_verify = conf.get("tls_verify", None)
-        self.timeout = conf.getfloat("timeout", 10.0)
-        self.server = conf.get("server", None)
+        self.tls_verify = typed(options, "tls_verify", str, None, where)
+        self.timeout = float(typed(options, "timeout", (int, float), 10.0, where))
+        self.server = typed(options, "server", str, None, where)
         # ldap3 lets an ldap:// URL override use_ssl, which would send the search
         # (and so the answer that decides who logs in) in clear text.
         if self.server and self.server.strip().lower().startswith("ldap://"):
-            raise ValueError(
+            raise ConfigError(
                 "ldap source 'server' must be an ldaps:// URL or a host name, "
                 "not ldap://"
             )
-        self.basedn = conf.get("basedn", "")
-        self.cert_attr = conf.get("cert_attr", "userCertificate")
-        self.username_attr = conf.get("username_attr", "uid")
+        self.basedn = typed(options, "basedn", str, "", where)
+        self.cert_attr = typed(options, "cert_attr", str, "userCertificate", where)
+        self.username_attr = typed(options, "username_attr", str, "uid", where)
         # Default only_auth_keys; "none" keeps every certificate in the attribute.
-        cert_filter: "Optional[Union[str, CertFilter]]" = conf.get("cert_filter", None)
+        cert_filter: "Optional[Union[str, CertFilter]]" = typed(
+            options, "cert_filter", str, None, where
+        )
         if cert_filter is None:
             cert_filter = only_auth_keys
-        elif isinstance(cert_filter, str):
-            if cert_filter.strip().lower() == "none":
-                cert_filter = None
-            else:
-                cert_filter = utils.import_module_object(cert_filter)
+        elif cert_filter.strip().lower() == "none":
+            cert_filter = None
+        else:
+            cert_filter = utils.import_module_object(cert_filter)
         self.cert_filter = cert_filter
 
     def _tls_kwargs(self) -> dict:
@@ -154,7 +177,9 @@ class LdapAuthorizedKeys(AuthkeysSource):
             or not Path(self.tls_key).exists()
             or not Path(self.tls_cert).exists()
         ):
-            raise RuntimeError("LDAP source is missing required configuration")
+            raise ConfigError(
+                "the ldap source needs a server and existing tls_cert/tls_key files"
+            )
 
         tls = ldap3.Tls(self.tls_key, self.tls_cert, **self._tls_kwargs())
         server = ldap3.Server(
@@ -176,7 +201,7 @@ class LdapAuthorizedKeys(AuthkeysSource):
             # resolver's error path instead of being cached as "no keys".
             result = conn.result.get("result")
             if result not in _SEARCH_ANSWERED:
-                raise RuntimeError(
+                raise SourceError(
                     f"LDAP search failed: {conn.result.get('description')} ({result})"
                 )
             # Search references (referrals) sit in the same list as entries.
@@ -186,7 +211,7 @@ class LdapAuthorizedKeys(AuthkeysSource):
             if not entries:
                 return
             if len(entries) > 1:
-                raise RuntimeError(
+                raise SourceError(
                     f"LDAP search for {username!r} matched {len(entries)} entries"
                 )
             for raw in entries[0]["raw_attributes"].get(self.cert_attr, []):

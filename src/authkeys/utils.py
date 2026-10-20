@@ -9,9 +9,17 @@ import os
 import stat
 from importlib import import_module
 from pathlib import Path
-from typing import Any, Callable, List, Optional
+from typing import Any, List, Optional
 
 from duho import logging
+
+__all__ = [
+    "MAX_USER_FILE_BYTES",
+    "get_groupmembers",
+    "get_user",
+    "import_module_object",
+    "read_user_file",
+]
 
 LOGGER = logging.getLogger("authkeys")
 
@@ -72,10 +80,6 @@ def read_user_file(path: Path, owner_uid: int, home: Path) -> "Optional[str]":
     return data.decode("utf-8", "replace")
 
 
-def parse_bool(val: Any) -> bool:
-    return str(val).lower() in ("1", "true", "enabled", "yes", "on")
-
-
 def get_user(username: "str | None" = None):
     """Return a ``pwd.struct_passwd`` for ``username`` (or the current uid)."""
     import pwd
@@ -90,19 +94,6 @@ def import_module_object(fqdn: str) -> Any:
     domain, name = fqdn.rsplit(".", maxsplit=1)
     module = import_module(domain)
     return getattr(module, name)
-
-
-def try_import(fqdn: str) -> Any:
-    try:
-        return import_module_object(fqdn)
-    except Exception:
-        return None
-
-
-def call(target: "str | Callable", *args, **kwargs) -> Any:
-    if isinstance(target, str):
-        target = import_module_object(target)
-    return target(*args, **kwargs)
 
 
 def get_groupmembers(name: str) -> "List[str]":

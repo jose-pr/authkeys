@@ -9,8 +9,7 @@ import types
 
 import pytest
 
-from authkeys import AuthkeysConfig
-from authkeys.sources.github import GithubKeys
+from authkeys.sources import GitHubSource
 
 RSA = "ssh-rsa AAAAB3Nza"
 ED = "ssh-ed25519 AAAAC3Nza"
@@ -52,9 +51,8 @@ def fake_requests(monkeypatch):
     return fake
 
 
-def _source(fake_requests, section="source:github", options=None):
-    conf = AuthkeysConfig.from_config({section: options or {}})
-    return GithubKeys(conf[section], {})
+def _source(fake_requests, options=None):
+    return GitHubSource(options or {}, {})
 
 
 def test_fetches_keys_from_default_github_url(fake_requests):

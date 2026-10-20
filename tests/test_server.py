@@ -6,14 +6,15 @@ import urllib.request
 
 import pytest
 
-from authkeys import AuthKeys, AuthkeysConfig, AuthkeysSource
+from authkeys import AuthKeys, KeySource, Settings
+from authkeys.sources import register_source
 from authkeys.server import KeyServer
 
 RSA = "ssh-rsa AAAAB3Nza alice@host"
 
 
-class OneKeySource(AuthkeysSource):
-    def __init__(self, conf, globals):
+class OneKeySource(KeySource):
+    def __init__(self, options, globals):
         pass
 
     def authorized_keys(self, username):
@@ -21,14 +22,13 @@ class OneKeySource(AuthkeysSource):
             yield RSA
 
 
+register_source("test-server-onekey", OneKeySource)
+
+
 @pytest.fixture
 def server():
-    conf = AuthkeysConfig.from_config(
-        {
-            "cache": {"backend": "authkeys.cache.AuthKeysCacheMemBackend"},
-            "globals": {},
-            "source:test": {"backend": f"{__name__}.OneKeySource"},
-        }
+    conf = Settings.from_mapping(
+        {"source": {"test": {"backend": "test-server-onekey"}}}
     )
     auth = AuthKeys()
     auth.load_config(conf)
@@ -99,12 +99,8 @@ def test_unknown_route_is_404(server):
 
 
 def test_auth_disabled_when_no_api_key():
-    conf = AuthkeysConfig.from_config(
-        {
-            "cache": {},
-            "globals": {},
-            "source:test": {"backend": f"{__name__}.OneKeySource"},
-        }
+    conf = Settings.from_mapping(
+        {"source": {"test": {"backend": "test-server-onekey"}}}
     )
     auth = AuthKeys()
     auth.load_config(conf)
@@ -116,12 +112,8 @@ def test_require_auth_with_empty_api_key_raises():
     # Fail-closed invariant lives in KeyServer itself now (not just cli.Serve):
     # constructing with require_auth=True and a falsy api_key must refuse to
     # start rather than silently disabling authentication.
-    conf = AuthkeysConfig.from_config(
-        {
-            "cache": {},
-            "globals": {},
-            "source:test": {"backend": f"{__name__}.OneKeySource"},
-        }
+    conf = Settings.from_mapping(
+        {"source": {"test": {"backend": "test-server-onekey"}}}
     )
     auth = AuthKeys()
     auth.load_config(conf)
@@ -130,12 +122,8 @@ def test_require_auth_with_empty_api_key_raises():
 
 
 def test_require_auth_with_set_api_key_ok():
-    conf = AuthkeysConfig.from_config(
-        {
-            "cache": {},
-            "globals": {},
-            "source:test": {"backend": f"{__name__}.OneKeySource"},
-        }
+    conf = Settings.from_mapping(
+        {"source": {"test": {"backend": "test-server-onekey"}}}
     )
     auth = AuthKeys()
     auth.load_config(conf)
@@ -146,13 +134,7 @@ def test_require_auth_with_set_api_key_ok():
 def _start(**options):
     auth = AuthKeys()
     auth.load_config(
-        AuthkeysConfig.from_config(
-            {
-                "cache": {},
-                "globals": {},
-                "source:test": {"backend": f"{__name__}.OneKeySource"},
-            }
-        )
+        Settings.from_mapping({"source": {"test": {"backend": "test-server-onekey"}}})
     )
     srv = KeyServer(auth, bind="127.0.0.1", port=0, api_key="secret", **options)
     thread = threading.Thread(target=srv.serve_forever, daemon=True)

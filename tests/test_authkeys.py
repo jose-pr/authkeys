@@ -4,36 +4,33 @@ import time
 
 import pytest
 
-from authkeys import (
-    AuthKeys,
-    AuthkeysConfig,
-    AuthkeysSource,
-    AuthorizedKey,
-    default_sanitize,
-)
-from authkeys.cache import (
-    AuthKeysCache,
-    AuthKeysCacheFileBackend,
-    AuthKeysCacheMemBackend,
-)
+from authkeys import AuthKeys, AuthorizedKey, KeySource, Settings, default_sanitize
+from authkeys.cache import AuthKeysCache, FileCache, MemoryCache
+from authkeys.config import Delegation
+from authkeys.exceptions import ConfigError
+from authkeys.sources import register_source
 
 RSA = "ssh-rsa AAAAB3Nza"
 ED = "ssh-ed25519 AAAAC3Nza"
 
 
-class StaticSource(AuthkeysSource):
+class StaticSource(KeySource):
     """Test source returning preconfigured keys, counting calls."""
 
+    options = frozenset({"name"})
     registry: "dict[str, list[str]]" = {}
 
-    def __init__(self, conf, globals):
-        self.name = conf.name.split(":", 1)[-1]
+    def __init__(self, options, globals):
+        self.name = options.get("name", "test")
         self.calls = 0
         StaticSource.registry[self.name] = self  # type: ignore
 
     def authorized_keys(self, username):
         self.calls += 1
         return list(getattr(self, "keys", {}).get(username, []))
+
+
+register_source("test-authkeys-static", StaticSource)
 
 
 # --- AuthorizedKey parsing ------------------------------------------------
@@ -205,13 +202,13 @@ def test_default_sanitize_does_not_touch_options():
 
 
 def test_mem_cache_roundtrip_hits():
-    cache = AuthKeysCache(AuthKeysCacheMemBackend(), ttl=100)
+    cache = AuthKeysCache(MemoryCache(), ttl=100)
     cache[("alice", "src")] = "value"
     assert cache[("alice", "src")] == "value"
 
 
 def test_mem_cache_respects_ttl():
-    cache = AuthKeysCache(AuthKeysCacheMemBackend(), ttl=0)
+    cache = AuthKeysCache(MemoryCache(), ttl=0)
     cache[("alice", "src")] = "value"
     time.sleep(0.01)
     assert cache[("alice", "src")] is None
@@ -219,7 +216,7 @@ def test_mem_cache_respects_ttl():
 
 
 def test_file_cache_roundtrip(tmp_path):
-    backend = AuthKeysCacheFileBackend(tmp_path)
+    backend = FileCache(tmp_path)
     cache = AuthKeysCache(backend, ttl=100)
     cache[("alice", "ldap")] = f"{RSA} a"
     assert (tmp_path / "ldap" / "alice").exists()
@@ -227,12 +224,14 @@ def test_file_cache_roundtrip(tmp_path):
 
 
 def test_file_cache_from_config_requires_existing_path(tmp_path):
-    conf = AuthkeysConfig.from_config({"cache": {"path": str(tmp_path)}})
-    backend = AuthKeysCacheFileBackend.from_config(conf["cache"])
+    backend = FileCache.from_config({"path": str(tmp_path)})
     assert backend.path == tmp_path
-    conf2 = AuthkeysConfig.from_config({"cache": {"path": "/does/not/exist"}})
-    with pytest.raises(FileNotFoundError):
-        AuthKeysCacheFileBackend.from_config(conf2["cache"])
+    assert (
+        FileCache.from_config({"path": ["/does/not/exist", str(tmp_path)]}).path
+        == tmp_path
+    )
+    with pytest.raises(ConfigError):
+        FileCache.from_config({"path": "/does/not/exist"})
 
 
 # --- AuthKeys resolution --------------------------------------------------
@@ -240,13 +239,12 @@ def test_file_cache_from_config_requires_existing_path(tmp_path):
 
 def _config(extra=None):
     base = {
-        "cache": {"backend": "authkeys.cache.AuthKeysCacheMemBackend", "expire": "100"},
-        "globals": {},
-        "source:test": {"backend": f"{__name__}.StaticSource"},
+        "cache": {"backend": "memory", "expire": 100},
+        "source": {"test": {"backend": "test-authkeys-static"}},
     }
     if extra:
         base.update(extra)
-    return AuthkeysConfig.from_config(base)
+    return Settings.from_mapping(base)
 
 
 def test_resolution_and_default_sanitize_adds_comment():
@@ -266,9 +264,7 @@ def test_resolution_dedups_across_users():
     auth.load_config(_config())
     src = StaticSource.registry["test"]
     src.keys = {"alice": [f"{RSA} x"], "bob": [f"{RSA} x", f"{ED} y"]}
-    auth.load_user_config(
-        "alice", AuthkeysConfig.from_config({"authorized": {"users": "alice\nbob"}})
-    )
+    auth.load_user_config("alice", Delegation(users=["alice", "bob"]))
     keys = list(auth.authorized_keys("alice"))
     assert [k.key for k in keys] == ["AAAAB3Nza", "AAAAC3Nza"]
 
@@ -289,7 +285,7 @@ def test_disabled_source_is_skipped():
     auth = AuthKeys()
     auth.load_config(
         _config(
-            {"source:test": {"backend": f"{__name__}.StaticSource", "enabled": "0"}}
+            {"source": {"test": {"backend": "test-authkeys-static", "enabled": False}}}
         )
     )
     assert list(auth.authorized_keys("alice")) == []
@@ -298,7 +294,7 @@ def test_disabled_source_is_skipped():
 def test_source_error_falls_back_to_expired_cache():
     StaticSource.registry.clear()
     auth = AuthKeys()
-    auth.load_config(_config({"cache": {"expire": "0", "expired_on_error": "1"}}))
+    auth.load_config(_config({"cache": {"expire": 0, "expired_on_error": True}}))
     src = StaticSource.registry["test"]
     src.keys = {"alice": [f"{RSA} x"]}
     list(auth.authorized_keys("alice"))  # populate cache (already expired at ttl=0)
@@ -329,18 +325,23 @@ def test_source_is_a_dataclass_with_expected_fields():
     }
 
 
-def test_source_from_config_builds_expected_fields():
-    from authkeys import Source
-
-    defaults = Source(
-        cached=True, enabled=True, backend=None, sanitize=default_sanitize, expire=None
+def test_load_config_builds_sources_from_settings():
+    auth = AuthKeys()
+    auth.load_config(
+        Settings.from_mapping(
+            {"source": {"test": {"backend": "test-authkeys-static", "expire": 42}}}
+        )
     )
-    conf = AuthkeysConfig.from_config(
-        {"source:test": {"backend": f"{__name__}.StaticSource", "expire": "42"}}
-    )
-    src = Source.from_config(conf["source:test"], {}, defaults)
+    src = auth.sources["test"]
     assert src.cached is True
     assert src.enabled is True
     assert src.expire == 42
     assert src.sanitize is default_sanitize
     assert isinstance(src.backend, StaticSource)
+
+
+def test_unknown_backend_name_is_a_config_error():
+    with pytest.raises(ConfigError, match="unknown source backend 'nope'"):
+        AuthKeys().load_config(
+            Settings.from_mapping({"source": {"x": {"backend": "nope"}}})
+        )

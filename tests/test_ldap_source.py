@@ -13,8 +13,8 @@ from cryptography.hazmat.primitives import hashes, serialization  # noqa: E402
 from cryptography.hazmat.primitives.asymmetric import ec  # noqa: E402
 from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID  # noqa: E402
 
-from authkeys import AuthkeysConfig  # noqa: E402
-from authkeys.sources.ldap import LdapAuthorizedKeys, only_auth_keys  # noqa: E402
+from authkeys.exceptions import ConfigError, SourceError  # noqa: E402
+from authkeys.sources import LDAPSource, only_auth_keys  # noqa: E402
 
 NOW = datetime.datetime.now(datetime.timezone.utc)
 CA_KEY = ec.generate_private_key(ec.SECP256R1())
@@ -116,17 +116,13 @@ def source(tmp_path, monkeypatch):
     monkeypatch.setattr(ldap3, "Connection", FakeConnection)
     monkeypatch.setattr(ldap3, "Server", lambda *a, **k: object())
     monkeypatch.setattr(ldap3, "Tls", lambda *a, **k: object())
-    conf = AuthkeysConfig.from_config(
-        {
-            "source:ldap": {
-                "server": "ldaps://dc.example",
-                "basedn": "dc=example",
-                "tls_cert": str(tmp_path / "cert.pem"),
-                "tls_key": str(tmp_path / "key.pem"),
-            }
-        }
-    )
-    return LdapAuthorizedKeys(conf["source:ldap"], {})
+    options = {
+        "server": "ldaps://dc.example",
+        "basedn": "dc=example",
+        "tls_cert": str(tmp_path / "cert.pem"),
+        "tls_key": str(tmp_path / "key.pem"),
+    }
+    return LDAPSource(options, {})
 
 
 def _answer(monkeypatch, result, response):
@@ -136,7 +132,7 @@ def _answer(monkeypatch, result, response):
 
 def test_refused_search_raises(source, monkeypatch):
     _answer(monkeypatch, {"result": 1, "description": "operationsError"}, [])
-    with pytest.raises(RuntimeError, match="operationsError"):
+    with pytest.raises(SourceError, match="operationsError"):
         list(source.authorized_keys("alice"))
 
 
@@ -164,22 +160,18 @@ def test_entry_without_the_attribute_is_no_keys(source, monkeypatch):
 
 def test_ambiguous_match_raises(source, monkeypatch):
     _answer(monkeypatch, {"result": 0, "description": "success"}, [_entry(), _entry()])
-    with pytest.raises(RuntimeError, match="matched 2 entries"):
+    with pytest.raises(SourceError, match="matched 2 entries"):
         list(source.authorized_keys("alice"))
 
 
 def test_cert_filter_none_keeps_every_certificate(source, monkeypatch, tmp_path):
-    conf = AuthkeysConfig.from_config(
-        {
-            "source:ldap": {
-                "server": "dc.example",
-                "cert_filter": "none",
-                "tls_cert": str(tmp_path / "cert.pem"),
-                "tls_key": str(tmp_path / "key.pem"),
-            }
-        }
-    )
-    src = LdapAuthorizedKeys(conf["source:ldap"], {})
+    options = {
+        "server": "dc.example",
+        "cert_filter": "none",
+        "tls_cert": str(tmp_path / "cert.pem"),
+        "tls_key": str(tmp_path / "key.pem"),
+    }
+    src = LDAPSource(options, {})
     _answer(
         monkeypatch,
         {"result": 0, "description": "success"},
@@ -190,17 +182,17 @@ def test_cert_filter_none_keeps_every_certificate(source, monkeypatch, tmp_path)
 
 @pytest.mark.parametrize("server", ["ldap://dc.example", "LDAP://dc.example:389"])
 def test_plain_ldap_url_is_refused(server):
-    conf = AuthkeysConfig.from_config({"source:ldap": {"server": server}})
-    with pytest.raises(ValueError, match="ldaps://"):
-        LdapAuthorizedKeys(conf["source:ldap"], {})
+    options = {"server": server}
+    with pytest.raises(ConfigError, match="ldaps://"):
+        LDAPSource(options, {})
 
 
 def test_failed_search_keeps_cached_keys_with_expired_on_error(source, monkeypatch):
     from authkeys import AuthKeys, Source
-    from authkeys.cache import AuthKeysCache, AuthKeysCacheMemBackend
+    from authkeys.cache import AuthKeysCache, MemoryCache
 
     auth = AuthKeys()
-    auth.cache = AuthKeysCache(AuthKeysCacheMemBackend(), ttl=0)
+    auth.cache = AuthKeysCache(MemoryCache(), ttl=0)
     auth.use_expired_on_error = True
     auth.sources = {
         "ldap": Source(

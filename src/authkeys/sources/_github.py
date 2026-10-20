@@ -8,21 +8,27 @@ convention) to reuse this source without a separate class.
 """
 
 import urllib.parse
-from configparser import SectionProxy
-from typing import Iterable
+from typing import Any, Iterable, Mapping
 
-from .. import AuthkeysSource
+from .. import KeySource
+from ..config import typed
 
 _DEFAULT_URL = "https://github.com/{username}.keys"
 
 
-class GithubKeys(AuthkeysSource):
-    def __init__(self, conf: SectionProxy, globals) -> None:
+class GitHubSource(KeySource):
+    """Keys from a forge's plain-text ``.keys`` endpoint."""
+
+    options = frozenset({"url", "timeout"})
+
+    def __init__(self, options: Mapping[str, Any], globals: dict) -> None:
         import requests
 
-        self.url = conf.get("url", _DEFAULT_URL)
+        self.url = typed(options, "url", str, _DEFAULT_URL, "github source")
         self.session = requests.Session()
-        self.timeout = conf.getfloat("timeout", 10.0)
+        self.timeout = float(
+            typed(options, "timeout", (int, float), 10.0, "github source")
+        )
 
     def authorized_keys(self, username: str) -> Iterable[str]:
         # Percent-encode the username: it may be attacker-controlled (via

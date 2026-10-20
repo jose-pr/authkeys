@@ -6,18 +6,46 @@ caching and user/group aliasing. Designed to be driven either from the CLI as an
 ``AuthorizedKeysCommand`` or as a long-running key server (``authkeys serve``).
 """
 
-import configparser
 import re
 import threading
-from configparser import SectionProxy
 from dataclasses import dataclass
-from typing import Callable, Dict, Iterable, List, NamedTuple, Optional, Union
+from typing import (
+    Any,
+    Callable,
+    ClassVar,
+    Dict,
+    FrozenSet,
+    Iterable,
+    List,
+    Mapping,
+    NamedTuple,
+    Optional,
+    Union,
+)
 
 from duho import logging
 
 from . import groupmembers, usermaps, utils
-from .cache import AuthKeysCache, AuthKeysCacheBackend
-from .config import AuthkeysConfig
+from .cache import AuthKeysCache
+from .config import Delegation, Settings, load_settings, parse_delegation, warn_unknown
+from .exceptions import AuthKeysError, ConfigError, SourceError
+
+__all__ = [
+    "AuthKeys",
+    "AuthKeysError",
+    "AuthorizedKey",
+    "ConfigError",
+    "KeySource",
+    "Sanitizer",
+    "Settings",
+    "Source",
+    "SourceError",
+    "UserConfig",
+    "Usermap",
+    "__version__",
+    "default_sanitize",
+    "load_settings",
+]
 
 try:
     from importlib.metadata import version as _pkg_version
@@ -39,21 +67,6 @@ _KEY_TYPE_RE = re.compile(r"^(ssh-|ecdsa-|sk-)")
 
 def _is_options_prefix(token: str) -> bool:
     return "=" in token or not _KEY_TYPE_RE.match(token)
-
-
-def _describe_config_error(error: Exception) -> str:
-    """Name a config parse error by type and line, never by the file's text."""
-    lines = getattr(error, "errors", None)
-    if lines:
-        return (
-            f"{type(error).__name__} at line(s) {', '.join(str(n) for n, _ in lines)}"
-        )
-    lineno = getattr(error, "lineno", None)
-    if lineno:
-        return f"{type(error).__name__} at line {lineno}"
-    if isinstance(error, configparser.Error):
-        return type(error).__name__
-    return f"{type(error).__name__}: {error}"
 
 
 def _split_first_token(line: str) -> "tuple":
@@ -134,10 +147,17 @@ class AuthorizedKey(NamedTuple):
                 yield key
 
 
-class AuthkeysSource:
-    """Base class for key sources. Subclasses yield raw ``authorized_keys`` lines."""
+class KeySource:
+    """Base class for key sources. Subclasses yield raw ``authorized_keys`` lines.
 
-    def __init__(self, conf: SectionProxy, globals: dict) -> None:
+    ``options`` names the keys a source reads from its ``[source.<name>]`` table;
+    any other key there is reported as unknown. The constructor gets those keys as
+    a read-only mapping and the shared ``globals`` dict.
+    """
+
+    options: ClassVar[FrozenSet[str]] = frozenset()
+
+    def __init__(self, options: Mapping[str, Any], globals: dict) -> None:
         pass
 
     def authorized_keys(self, username: str) -> Iterable[str]:
@@ -165,39 +185,13 @@ def default_sanitize(src: str, uid: str, key: AuthorizedKey) -> AuthorizedKey:
 
 @dataclass
 class Source:
+    """A configured source as the resolver runs it."""
+
     cached: bool
     enabled: bool
-    backend: "Optional[AuthkeysSource]"
+    backend: "Optional[KeySource]"
     sanitize: "Optional[Sanitizer]"
     expire: "Optional[int]"  # per-source TTL override; None => use [cache] expire
-
-    @classmethod
-    def from_config(
-        cls, config: SectionProxy, globals: dict, defaults: "Source"
-    ) -> "Source":
-        cached = config.getboolean("cached", defaults.cached)
-        enabled = config.getboolean("enabled", defaults.enabled)
-        backend = config.get("backend")
-        sanitize = config.get("sanitize")
-        if enabled and backend:
-            backend = utils.call(backend, config, globals)
-        if isinstance(sanitize, str):
-            sanitize = utils.import_module_object(sanitize)
-        elif sanitize is None:
-            sanitize = defaults.sanitize
-        expire = config.get("expire")
-        try:
-            expire = int(expire) if expire is not None else None
-        except (TypeError, ValueError):
-            LOGGER.error(f"Invalid source 'expire' {expire!r}; using [cache] expire")
-            expire = None
-        return cls(
-            cached=cached,
-            enabled=enabled,
-            backend=backend,
-            sanitize=sanitize,
-            expire=expire,
-        )
 
 
 class AuthKeys:
@@ -221,69 +215,55 @@ class AuthKeys:
         # shared cache backend (esp. the file backend's read/write).
         self._lock = threading.RLock()
 
-    def load_config(self, config: AuthkeysConfig) -> None:
-        for section in config.sections():
-            if not section.startswith("source:"):
-                continue
-            name = section[len("source:") :]
-            src_config = config[section]
+    def load_config(self, settings: Settings) -> None:
+        """Build the sources, usermap, group resolver and cache from ``settings``.
+
+        An unknown backend name raises :class:`ConfigError`; a cache backend that
+        cannot be built is logged and leaves caching off.
+        """
+        from .cache import get_cache
+        from .sources import get_source
+
+        for name, source in settings.sources.items():
             LOGGER.info(f"Registering source {name}")
-            self.sources[name] = Source.from_config(
-                src_config, self.globals, self.source_defaults
+            backend = None
+            if source.enabled:
+                cls = get_source(source.backend)
+                warn_unknown(source.options, cls.options, f"source.{name}")
+                backend = cls(source.options, self.globals)
+            sanitize = (
+                utils.import_module_object(source.sanitize)
+                if source.sanitize
+                else self.source_defaults.sanitize
+            )
+            self.sources[name] = Source(
+                cached=source.cached,
+                enabled=source.enabled,
+                backend=backend,
+                sanitize=sanitize,
+                expire=source.expire,
             )
 
-        self.usermap = utils.import_module_object(
-            config["globals"].get("usermap") or "authkeys.usermaps.none"
-        )
-        self.groupmembers = utils.import_module_object(
-            config["globals"].get("groupmembers")
-            or "authkeys.groupmembers.system_groupmembers"
-        )
+        self.usermap = utils.import_module_object(settings.globals.usermap)
+        self.groupmembers = utils.import_module_object(settings.globals.groupmembers)
 
-        cache_conf = config["cache"]
-        cache_backend = utils.import_module_object(
-            cache_conf.get("backend") or "authkeys.cache.AuthKeysCacheMemBackend"
-        )
-        # Parse the TTL independently: a malformed `expire` should fall back to
-        # the default, not disable caching entirely (and not mask a genuine
-        # backend construction error below).
-        try:
-            ttl = int(cache_conf.get("expire", 300))
-        except (TypeError, ValueError):
-            LOGGER.error(
-                f"Invalid cache 'expire' value {cache_conf.get('expire')!r}; "
-                f"falling back to default TTL 300"
-            )
-            ttl = 300
-        neg_raw = cache_conf.get("negative_expire")
-        try:
-            negative_ttl = int(neg_raw) if neg_raw is not None else None
-        except (TypeError, ValueError):
-            LOGGER.error(f"Invalid 'negative_expire' {neg_raw!r}; using expire")
-            negative_ttl = None
-        stale_raw = cache_conf.get("max_stale")
-        try:
-            max_stale = int(stale_raw) if stale_raw is not None else None
-        except (TypeError, ValueError):
-            LOGGER.error(
-                f"Invalid 'max_stale' {stale_raw!r}; expired keys are not bounded"
-            )
-            max_stale = None
+        cache = settings.cache
+        cache_cls = get_cache(cache.backend)
+        warn_unknown(cache.options, cache_cls.options, "cache")
         try:
             self.cache = AuthKeysCache(
-                backend=cache_backend.from_config(cache_conf),
-                ttl=ttl,
-                negative_ttl=negative_ttl,
-                max_stale=max_stale,
+                backend=cache_cls.from_config(cache.options),
+                ttl=cache.expire,
+                negative_ttl=cache.negative_expire,
+                max_stale=cache.max_stale,
             )
         except Exception as e:
             LOGGER.error(f"Could not load cache due to\n{e}")
             self.cache = None
-
-        self.use_expired_on_error = utils.parse_bool(cache_conf.get("expired_on_error"))
+        self.use_expired_on_error = cache.expired_on_error
 
     def user_config_path(self, username: str):
-        """Return a user's ``~/.ssh/authkeys.conf`` path, or None if unknown.
+        """Return a user's ``~/.ssh/authkeys.cfg`` path, or None if unknown.
 
         POSIX-only (uses ``pwd``); returns None when the user has no local
         account, so the caller can fall back to resolving the literal username.
@@ -296,7 +276,7 @@ class AuthKeys:
             user = utils.get_user(username)
         except Exception:
             return None
-        return Path(user.pw_dir) / _config.USER_CONF_PATH
+        return Path(user.pw_dir) / _config.USER_CONFIG
 
     def resolve(
         self, username: str, *, load_delegation: bool = True
@@ -318,16 +298,13 @@ class AuthKeys:
             try:
                 text = self._delegation_text(username)
                 if text is not None:
-                    user_conf = AuthkeysConfig.from_config(
-                        text.encode("utf-8"), interpolate_env=False
+                    delegation = parse_delegation(
+                        text, where=f"{username}'s authkeys.cfg"
                     )
                     with self._lock:
-                        self.load_user_config(username, user_conf)
+                        self.load_user_config(username, delegation)
             except Exception as e:
-                LOGGER.error(
-                    f"Could not load delegation config for {username}: "
-                    f"{_describe_config_error(e)}"
-                )
+                LOGGER.error(f"Could not load delegation config for {username}: {e}")
         return list(self.authorized_keys(username))
 
     def _delegation_text(self, username: str) -> "Optional[str]":
@@ -344,18 +321,17 @@ class AuthKeys:
             owner, home = -1, Path(path).parent.parent
         return utils.read_user_file(Path(path), owner, home)
 
-    def load_user_config(self, username: str, parser: AuthkeysConfig) -> None:
+    def load_user_config(self, username: str, delegation: Delegation) -> None:
+        """Apply a delegation: its ``users`` (default: the user alone) plus the
+        members of its ``groups``, resolved through ``self.groupmembers``."""
         config = UserConfig()
-        authorized = parser["authorized"] if parser.has_section("authorized") else None
-        groups = authorized.getlist("groups", []) if authorized else []
-        if not authorized or "users" not in authorized:
-            config.authorized_users = [username]
-        else:
-            config.authorized_users = authorized.getlist("users", [])
-        config.authorized_groups = list(groups)
+        config.authorized_users = (
+            [username] if delegation.users is None else list(delegation.users)
+        )
+        config.authorized_groups = list(delegation.groups)
         LOGGER.info(f"Authorized Users: {config.authorized_users}")
-        LOGGER.info(f"Authorized Groups: {groups}")
-        for groupname in groups:
+        LOGGER.info(f"Authorized Groups: {config.authorized_groups}")
+        for groupname in delegation.groups:
             try:
                 members = self.groupmembers(groupname, self.globals)
             except Exception as e:

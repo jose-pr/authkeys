@@ -7,13 +7,13 @@ import subprocess
 import sys
 from pathlib import Path
 
-from authkeys.cli import Authkeys
+from authkeys.cli import AuthKeysCLI
 
 SRC = str(Path(__file__).resolve().parents[1] / "src")
 
 
 def test_root_does_not_opt_out_of_mcp():
-    assert getattr(Authkeys, "_mcp_", True) is True
+    assert getattr(AuthKeysCLI, "_mcp_", True) is True
 
 
 def _run(env_extra, stdin):
@@ -21,7 +21,7 @@ def _run(env_extra, stdin):
     env.pop("AUTHKEYS_MCP", None)
     env.update(env_extra)
     env["PYTHONPATH"] = SRC + os.pathsep + env.get("PYTHONPATH", "")
-    code = "import sys; from authkeys.cli import run; sys.argv[0] = 'authkeys'; sys.exit(run(sys.argv[1:]))"
+    code = "import sys; from authkeys.cli import main; sys.argv[0] = 'authkeys'; sys.exit(main(sys.argv[1:]))"
     return subprocess.run(
         [sys.executable, "-c", code, "--version"],
         input=stdin,

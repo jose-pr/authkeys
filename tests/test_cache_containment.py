@@ -6,13 +6,13 @@ import pathlib
 
 import pytest
 
-from authkeys import AuthKeys, AuthkeysSource, Source
-from authkeys.cache import AuthKeysCache, AuthKeysCacheFileBackend
+from authkeys import AuthKeys, KeySource, Source
+from authkeys.cache import AuthKeysCache, FileCache
 
 ED = "ssh-ed25519 AAAAC3Nza"
 
 
-class Keys(AuthkeysSource):
+class Keys(KeySource):
     def __init__(self, keys):
         self.keys = keys
         self.calls = 0
@@ -26,7 +26,7 @@ def _auth(tmp_path, keys, *, expired_on_error=False):
     root = tmp_path / "cache"
     root.mkdir()
     auth = AuthKeys()
-    auth.cache = AuthKeysCache(AuthKeysCacheFileBackend(root), ttl=300)
+    auth.cache = AuthKeysCache(FileCache(root), ttl=300)
     auth.use_expired_on_error = expired_on_error
     src = Keys(keys)
     auth.sources = {
@@ -37,7 +37,7 @@ def _auth(tmp_path, keys, *, expired_on_error=False):
 
 @pytest.mark.parametrize("uid", ["", ".", "..", "../x", "a/b", "a\\b", "C:x", "a\x00b"])
 def test_entry_path_refuses_non_plain_names(tmp_path, uid):
-    backend = AuthKeysCacheFileBackend(tmp_path)
+    backend = FileCache(tmp_path)
     with pytest.raises(ValueError):
         backend.cached_entry_path((uid, "s"))
     with pytest.raises(ValueError):
@@ -73,7 +73,7 @@ def test_failed_cache_write_keeps_the_fetched_keys(tmp_path, monkeypatch, caplog
     def full(self, key, value):
         raise OSError(28, "No space left on device")
 
-    monkeypatch.setattr(AuthKeysCacheFileBackend, "__setitem__", full)
+    monkeypatch.setattr(FileCache, "__setitem__", full)
     assert [str(k) for k in auth.authorized_keys("bob")] == [f"{ED} bob@x"]
     assert any("Could not cache keys for bob" in r.getMessage() for r in caplog.records)
 
@@ -84,7 +84,7 @@ def test_failed_cache_read_is_a_miss(tmp_path, monkeypatch):
     def unreadable(self, key):
         raise PermissionError(13, "Permission denied")
 
-    monkeypatch.setattr(AuthKeysCacheFileBackend, "__getitem__", unreadable)
+    monkeypatch.setattr(FileCache, "__getitem__", unreadable)
     assert [str(k) for k in auth.authorized_keys("bob")] == [f"{ED} bob@x"]
     assert src.calls == 1
 

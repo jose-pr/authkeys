@@ -9,8 +9,7 @@ import types
 
 import pytest
 
-from authkeys import AuthkeysConfig
-from authkeys.sources.file import AuthorizedKeysFiles
+from authkeys.sources import FileSource
 
 # The fake passwd entry's uid matches the files the test writes, as on a real host.
 _UID = getattr(os, "getuid", lambda: 0)()
@@ -34,8 +33,7 @@ def fake_pwd(monkeypatch, tmp_path):
 
 
 def _source():
-    conf = AuthkeysConfig.from_config({"source:files": {}})
-    return AuthorizedKeysFiles(conf["source:files"], {})
+    return FileSource({}, {})
 
 
 def test_reads_keys_skipping_blanks_and_comments(fake_pwd):

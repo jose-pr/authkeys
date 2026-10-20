@@ -4,6 +4,8 @@ from typing import List
 
 from . import utils
 
+__all__ = ["system_groupmembers"]
+
 
 def system_groupmembers(name: str, globals: dict) -> "List[str]":
     """Resolve members from the local system group database (``/etc/group``)."""

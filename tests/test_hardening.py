@@ -6,12 +6,13 @@ import time
 
 import pytest
 
-from authkeys import AuthKeys, AuthkeysConfig, AuthkeysSource
+from authkeys import AuthKeys, KeySource, Settings
+from authkeys.sources import LDAPSource, register_source
 from authkeys.cache import (
     _NEGATIVE_MARKER,
     AuthKeysCache,
-    AuthKeysCacheFileBackend,
-    AuthKeysCacheMemBackend,
+    FileCache,
+    MemoryCache,
 )
 
 RSA = "ssh-rsa AAAAB3Nza"
@@ -31,11 +32,7 @@ ED = "ssh-ed25519 AAAAC3Nza"
 )
 def test_ldap_tls_verify_modes(value, expected_validate, ca_key):
     pytest.importorskip("ldap3")
-    from authkeys.sources.ldap import LdapAuthorizedKeys
-
-    section = {} if value is None else {"tls_verify": value}
-    conf = AuthkeysConfig.from_config({"source:ldap": section})
-    src = LdapAuthorizedKeys(conf["source:ldap"], {})
+    src = LDAPSource({} if value is None else {"tls_verify": value}, {})
     kwargs = src._tls_kwargs()
     assert kwargs["validate"] == expected_validate
     assert "ca_certs_file" not in kwargs and "ca_certs_path" not in kwargs
@@ -43,40 +40,39 @@ def test_ldap_tls_verify_modes(value, expected_validate, ca_key):
 
 def test_ldap_tls_verify_file_vs_dir(tmp_path):
     pytest.importorskip("ldap3")
-    from authkeys.sources.ldap import LdapAuthorizedKeys
-
     ca = tmp_path / "ca.pem"
     ca.write_text("x")
-    conf = AuthkeysConfig.from_config({"source:ldap": {"tls_verify": str(ca)}})
-    kwargs = LdapAuthorizedKeys(conf["source:ldap"], {})._tls_kwargs()
+    kwargs = LDAPSource({"tls_verify": str(ca)}, {})._tls_kwargs()
     assert kwargs["validate"] == ssl.CERT_REQUIRED
     assert kwargs["ca_certs_file"] == str(ca)
 
-    conf2 = AuthkeysConfig.from_config({"source:ldap": {"tls_verify": str(tmp_path)}})
-    kwargs2 = LdapAuthorizedKeys(conf2["source:ldap"], {})._tls_kwargs()
+    kwargs2 = LDAPSource({"tls_verify": str(tmp_path)}, {})._tls_kwargs()
     assert kwargs2["ca_certs_path"] == str(tmp_path)
 
 
 # --- Malformed key line doesn't nuke the source -----------------------------
 
 
-class MixedSource(AuthkeysSource):
-    def __init__(self, conf, globals):
+class MixedSource(KeySource):
+    def __init__(self, options, globals):
         pass
 
     def authorized_keys(self, username):
         return [f"{RSA} ok", "BADLINE", f"{ED} ok2"]
 
 
+def _name(source_cls):
+    """Register ``source_cls`` (idempotently) and return its name."""
+    name = f"test-hardening-{source_cls.__name__.lower()}"
+    register_source(name, source_cls)
+    return name
+
+
 def _auth(source_cls, extra_cache=None):
-    cache = {"backend": "authkeys.cache.AuthKeysCacheMemBackend", "expire": "100"}
+    cache = {"backend": "memory", "expire": 100}
     cache.update(extra_cache or {})
-    conf = AuthkeysConfig.from_config(
-        {
-            "cache": cache,
-            "globals": {},
-            "source:t": {"backend": f"{__name__}.{source_cls.__name__}"},
-        }
+    conf = Settings.from_mapping(
+        {"cache": cache, "source": {"t": {"backend": _name(source_cls)}}}
     )
     auth = AuthKeys()
     auth.load_config(conf)
@@ -89,8 +85,8 @@ def test_malformed_line_is_skipped_not_fatal():
     assert [k.key for k in keys] == ["AAAAB3Nza", "AAAAC3Nza"]
 
 
-class OnceBadSource(AuthkeysSource):
-    def __init__(self, conf, globals):
+class OnceBadSource(KeySource):
+    def __init__(self, options, globals):
         pass
 
     def authorized_keys(self, username):
@@ -98,7 +94,7 @@ class OnceBadSource(AuthkeysSource):
 
 
 def test_malformed_line_does_not_trigger_expired_fallback():
-    auth = _auth(OnceBadSource, {"expire": "0", "expired_on_error": "1"})
+    auth = _auth(OnceBadSource, {"expire": 0, "expired_on_error": True})
     # Pre-seed a stale entry, then let it expire so the top-of-resolve cache read
     # misses and the fetch+parse path (which skips the bad line) runs.
     auth.cache[("alice", "t")] = f"{RSA} stale"
@@ -112,10 +108,10 @@ def test_malformed_line_does_not_trigger_expired_fallback():
 # --- Lock not held across fetch ---------------------------------------------
 
 
-class BlockingSource(AuthkeysSource):
+class BlockingSource(KeySource):
     gate = threading.Event()
 
-    def __init__(self, conf, globals):
+    def __init__(self, options, globals):
         pass
 
     def authorized_keys(self, username):
@@ -151,7 +147,7 @@ def test_lock_not_held_across_fetch():
 
 
 def test_negative_cache_uses_negative_ttl():
-    cache = AuthKeysCache(AuthKeysCacheMemBackend(), ttl=100, negative_ttl=0)
+    cache = AuthKeysCache(MemoryCache(), ttl=100, negative_ttl=0)
     cache[("u", "s")] = ""  # empty => negative entry
     time.sleep(0.01)
     # Negative TTL is 0 -> the empty result has already expired.
@@ -162,7 +158,7 @@ def test_negative_cache_uses_negative_ttl():
 
 
 def test_negative_marker_never_confused_with_keys():
-    backend = AuthKeysCacheMemBackend()
+    backend = MemoryCache()
     cache = AuthKeysCache(backend, ttl=100)
     cache[("u", "s")] = ""
     stored, _ts = backend[("u", "s")]
@@ -170,10 +166,10 @@ def test_negative_marker_never_confused_with_keys():
     assert cache.get(("u", "s")) == ""  # reads back as empty, not the marker
 
 
-class FlakyHTTPSource(AuthkeysSource):
+class FlakyHTTPSource(KeySource):
     status = 503
 
-    def __init__(self, conf, globals):
+    def __init__(self, options, globals):
         pass
 
     def authorized_keys(self, username):
@@ -181,7 +177,7 @@ class FlakyHTTPSource(AuthkeysSource):
 
 
 def test_http_error_falls_back_to_stale_not_cached_empty():
-    auth = _auth(FlakyHTTPSource, {"expired_on_error": "1"})
+    auth = _auth(FlakyHTTPSource, {"expired_on_error": True})
     auth.cache[("alice", "t")] = f"{RSA} previously-good"
     keys = list(auth.resolve("alice", load_delegation=False))
     assert [k.key for k in keys] == ["AAAAB3Nza"]  # stale served, not empty
@@ -191,14 +187,10 @@ def test_http_error_falls_back_to_stale_not_cached_empty():
 
 
 def test_per_source_expire_overrides_global():
-    conf = AuthkeysConfig.from_config(
+    conf = Settings.from_mapping(
         {
-            "cache": {
-                "backend": "authkeys.cache.AuthKeysCacheMemBackend",
-                "expire": "100",
-            },
-            "globals": {},
-            "source:t": {"backend": f"{__name__}.MixedSource", "expire": "0"},
+            "cache": {"backend": "memory", "expire": 100},
+            "source": {"t": {"backend": _name(MixedSource), "expire": 0}},
         }
     )
     auth = AuthKeys()
@@ -214,7 +206,7 @@ def test_per_source_expire_overrides_global():
 
 
 def test_file_backend_atomic_and_private(tmp_path):
-    backend = AuthKeysCacheFileBackend(tmp_path)
+    backend = FileCache(tmp_path)
     backend[("alice", "ldap")] = f"{RSA} a"
     entry = tmp_path / "ldap" / "alice"
     assert entry.read_text() == f"{RSA} a"
@@ -226,7 +218,7 @@ def test_file_backend_atomic_and_private(tmp_path):
 
 
 def test_file_backend_keys_and_delete(tmp_path):
-    backend = AuthKeysCacheFileBackend(tmp_path)
+    backend = FileCache(tmp_path)
     backend[("alice", "ldap")] = "a"
     backend[("bob", "ldap")] = "b"
     assert set(backend.keys()) == {("alice", "ldap"), ("bob", "ldap")}
@@ -235,7 +227,7 @@ def test_file_backend_keys_and_delete(tmp_path):
 
 
 def test_sweep_by_max_entries(tmp_path):
-    backend = AuthKeysCacheFileBackend(tmp_path)
+    backend = FileCache(tmp_path)
     for i in range(5):
         backend[(f"u{i}", "s")] = str(i)
         time.sleep(0.01)
@@ -247,8 +239,8 @@ def test_sweep_by_max_entries(tmp_path):
 # --- Dedup by (type, key) -------------------------------------------------
 
 
-class KeyFromTwoSources(AuthkeysSource):
-    def __init__(self, conf, globals):
+class KeyFromTwoSources(KeySource):
+    def __init__(self, options, globals):
         pass
 
     def authorized_keys(self, username):
@@ -256,27 +248,12 @@ class KeyFromTwoSources(AuthkeysSource):
 
 
 def test_dedup_across_sources_by_identity():
-    conf = AuthkeysConfig.from_config(
-        {
-            "cache": {},
-            "globals": {},
-            "source:a": {"backend": f"{__name__}.KeyFromTwoSources"},
-            "source:b": {"backend": f"{__name__}.KeyFromTwoSources"},
-        }
+    name = _name(KeyFromTwoSources)
+    conf = Settings.from_mapping(
+        {"source": {"a": {"backend": name}, "b": {"backend": name}}}
     )
     auth = AuthKeys()
     auth.load_config(conf)
     keys = list(auth.resolve("alice", load_delegation=False))
     # Same public key from two sources (different per-source comments) -> once.
     assert len([k for k in keys if k.key == "AAAAB3Nza"]) == 1
-
-
-# --- Getlist fallback copy -------------------------------------------------
-
-
-def test_getlist_fallback_is_copied():
-    conf = AuthkeysConfig.from_config({"s": {}})
-    default = ["a", "b"]
-    got = conf["s"].getlist("missing", default)
-    got.append("c")
-    assert default == ["a", "b"]  # untouched

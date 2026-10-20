@@ -1,53 +1,75 @@
-"""Built-in key sources, re-exported under short aliases used in config.
+"""Key sources, found by name.
 
-``backend = authkeys.sources.<alias>`` in a ``[source:*]`` section selects one.
-Optional third-party dependencies (``requests``, ``ldap3``, ``cryptography``) are
-imported lazily inside each module so the core package stays dependency-free.
-
-Built-ins are also registered by name in ``_SOURCE_REGISTRY`` via
-:func:`register_source`. This is additive: config resolution still goes
-through ``utils.import_module_object`` unchanged (a fully-qualified
-``backend =`` dotted path always works). The registry exists as a lookup
-helper for future entry-point-based discovery of third-party sources.
+``backend = "<name>"`` in a ``[source.<name>]`` table selects one. ``file``,
+``http``, ``github`` and ``ldap`` are built in; an installed distribution adds a
+source through the ``authkeys.sources`` entry-point group (``name =
+"pkg.module:Class"``, a :class:`~authkeys.KeySource` subclass). Optional
+dependencies (``syshttp``/``requests``, ``ldap3``, ``cryptography``) are imported
+inside each source, so naming a source never fails for a missing extra until it
+is used.
 """
 
-from typing import Dict, Type
+from typing import Dict, Tuple, Type
 
-from .file import AuthorizedKeysFiles as authorizedkeys
-from .github import GithubKeys as github
-from .http import HttpAuthorizedKeys as http
-from .ldap import LdapAuthorizedKeys as ldap
+from .. import KeySource
+from ..exceptions import ConfigError
+from ._file import FileSource
+from ._github import GitHubSource
+from ._http import HTTPSource
+from ._ldap import LDAPSource, only_auth_keys
 
-_SOURCE_REGISTRY: "Dict[str, type]" = {}
+__all__ = [
+    "FileSource",
+    "GitHubSource",
+    "HTTPSource",
+    "LDAPSource",
+    "get_source",
+    "only_auth_keys",
+    "register_source",
+    "source_names",
+]
+
+_SOURCES: "Dict[str, Type[KeySource]]" = {}
+_PLUGINS_LOADED = False
 
 
-def register_source(alias: str, cls: "Type") -> "Type":
-    """Register ``cls`` under ``alias`` in the source registry.
-
-    Returns ``cls`` unchanged so it can also be used as a decorator.
-    """
-    _SOURCE_REGISTRY[alias] = cls
+def register_source(name: str, cls: "Type[KeySource]") -> "Type[KeySource]":
+    """Register a source class under ``name``; a name taken by another class is a
+    ``ValueError``. Returns ``cls``."""
+    if _SOURCES.get(name, cls) is not cls:
+        raise ValueError(f"source {name!r} is already registered")
+    _SOURCES[name] = cls
     return cls
 
 
-def get_source(alias: str) -> "Type":
-    """Look up a registered source class by alias.
+def _load_plugins() -> None:
+    global _PLUGINS_LOADED
+    if _PLUGINS_LOADED:
+        return
+    _PLUGINS_LOADED = True
+    from .._plugins import load_entry_points
 
-    Raises ``KeyError`` if ``alias`` was never registered.
-    """
-    return _SOURCE_REGISTRY[alias]
+    load_entry_points("authkeys.sources", _SOURCES, KeySource)
 
 
-register_source("authorizedkeys", authorizedkeys)
-register_source("http", http)
-register_source("ldap", ldap)
-register_source("github", github)
+def source_names() -> "Tuple[str, ...]":
+    """The registered source names, sorted."""
+    _load_plugins()
+    return tuple(sorted(_SOURCES))
 
-__all__ = [
-    "authorizedkeys",
-    "http",
-    "ldap",
-    "github",
-    "register_source",
-    "get_source",
-]
+
+def get_source(name: str) -> "Type[KeySource]":
+    """The source class registered as ``name``; ``ConfigError`` listing the names."""
+    _load_plugins()
+    try:
+        return _SOURCES[name]
+    except KeyError:
+        raise ConfigError(
+            f"unknown source backend {name!r}; registered: {', '.join(source_names())}"
+        ) from None
+
+
+register_source("file", FileSource)
+register_source("http", HTTPSource)
+register_source("github", GitHubSource)
+register_source("ldap", LDAPSource)

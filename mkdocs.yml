@@ -40,6 +40,8 @@ nav:
       - Server: api/server.md
       - Cache: api/cache.md
       - Config: api/config.md
+      - CLI: api/cli.md
+      - Exceptions: api/exceptions.md
   - Changelog: changelog.md
 
 plugins:

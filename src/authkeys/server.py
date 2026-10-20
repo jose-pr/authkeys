@@ -29,6 +29,8 @@ from duho import logging
 
 from . import AuthKeys
 
+__all__ = ["KeyHandler", "KeyServer", "serve"]
+
 LOGGER = logging.getLogger("authkeys.server")
 
 

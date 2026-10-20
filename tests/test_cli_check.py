@@ -15,7 +15,7 @@ import logging
 import sys
 import types
 
-from authkeys.cli import run
+from authkeys.cli import main as run
 
 # The fake passwd entry's uid matches the files the test writes, as on a real host.
 _UID = getattr(os, "getuid", lambda: 0)()
@@ -38,13 +38,11 @@ def test_check_prints_key_to_stdout_and_traces_per_source(
     )
     monkeypatch.setitem(sys.modules, "pwd", fake_pwd)
 
-    conf = tmp_path / "authkeys.conf"
-    conf.write_text(
-        "[cache]\n[source:files]\nbackend = authkeys.sources.authorizedkeys\n"
-    )
+    conf = tmp_path / "authkeys.cfg"
+    conf.write_text('[source.files]\nbackend = "file"\n')
 
     with caplog.at_level(logging.INFO, logger="authkeys"):
-        rc = run(["check", "alice", "--config", str(conf)])
+        rc = run(["--config", str(conf), "check", "alice"])
     out = capsys.readouterr()
 
     assert rc == 0

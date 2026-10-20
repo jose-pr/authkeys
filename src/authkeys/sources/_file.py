@@ -1,15 +1,22 @@
 """File source: read keys from a user's ``~/.ssh/authorized_keys`` files."""
 
-from configparser import SectionProxy
 from pathlib import Path
-from typing import Iterable
+from typing import Any, Iterable, Mapping
 
-from .. import AuthkeysSource, utils
+from .. import KeySource, utils
+from ..config import typed
+
+_DEFAULT_PATHS = ["authorized_keys", "authorized_keys2"]
 
 
-class AuthorizedKeysFiles(AuthkeysSource):
-    def __init__(self, conf: SectionProxy, globals) -> None:
-        self.paths = conf.getlist("paths", ["authorized_keys", "authorized_keys2"])
+class FileSource(KeySource):
+    """Keys from the target user's own ``~/.ssh`` files."""
+
+    options = frozenset({"paths"})
+
+    def __init__(self, options: Mapping[str, Any], globals: dict) -> None:
+        paths = typed(options, "paths", (list, str), _DEFAULT_PATHS, "file source")
+        self.paths = [paths] if isinstance(paths, str) else [str(p) for p in paths]
 
     def authorized_keys(self, username: str) -> Iterable[str]:
         import pwd
