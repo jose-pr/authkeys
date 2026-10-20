@@ -80,6 +80,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `apikey` query parameter, so a client can keep it out of URLs.
 - `[serve] request_timeout` and `[serve] max_connections` (see Security).
 
+### Documentation
+- The README and docs recommend a dedicated `AuthorizedKeysCommandUser` instead
+  of `nobody`: with the on-disk cache, whatever runs as that account can write
+  cache entries, and so keys.
+- The github source's docs warn that with the default identity usermap local
+  account `X` trusts the forge account `X`, which for `root`, `admin` or `git`
+  belongs to someone else.
+- The shipped API header documents `completion` with its positional shell
+  argument, and when `resolve` is inserted before a `--`.
+
 ### Changed
 - **The `duho` requirement moves to its 0.7.x series: `>=0.7.4,<0.8.0`** (was
   `>=0.6.0,<0.7.0`). The floor is 0.7.4 because the entry now uses

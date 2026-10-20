@@ -157,7 +157,9 @@ section; each is also importable directly as its real class.
   period, not self-signed, KeyUsage (if present) with digitalSignature, EKU (if
   present) with clientAuth or anyExtendedKeyUsage. Requires `ldap3` +
   `cryptography` (`authkeys[ldap]`), imported lazily.
-- **`github`** (`sources/github.py`) — GETs a forge's plain-text `.keys`
+- **`github`** (`sources/github.py`) — with the default identity usermap, local
+  account `X` trusts the keys of the forge account `X`, which for `root`,
+  `admin`, `git` and the like belongs to someone else: use a `usermap`. GETs a forge's plain-text `.keys`
   endpoint (`url`, `{username}`-templated, default GitHub's; point it at
   another forge with the same convention to reuse this source). No comments
   in the source data. `timeout` default `10.0`. Requires `requests`
@@ -174,8 +176,9 @@ model this builds on.
 - **`run(argv: Sequence[str] | None = None) -> int`** — the console
   script entry point; `duho.run(Authkeys, ..., exit=False)`, so it returns the
   status (a `SystemExit` becomes its status, Ctrl-C is `130`). Inserts the default `resolve` subcommand when `argv`
-  names none (so `authkeys %u` behaves like `authkeys resolve %u`), unless
-  `-h`/`--help`/`--version` is present or a bare `--` precedes every token.
+  names none (so `authkeys %u` behaves like `authkeys resolve %u`): `resolve`
+  is put first unless a subcommand name or `-h`/`--help`/`--version` appears
+  before the first `--`.
 - **`Authkeys`** — the CLI root; subcommands `resolve` (alias `keys`),
   `serve`, `cache`, `check`, `completion`.
 - **`resolve`** / **`check`** — never let an exception cross this boundary:
@@ -200,8 +203,8 @@ model this builds on.
   backend that can't list its entries), and `2` for an unknown action. These
   are `CommandError`s reported by the root's `_report_error_` as one `ERROR`
   record on the `authkeys` logger, with no `authkeys: error:` line.
-- **`completion`** — prints a shell completion script for `--shell
-  {bash,zsh,fish}`.
+- **`completion [bash|zsh|fish]`** — prints a shell completion script for the
+  shell named by the positional argument (default `bash`).
 
 ## HTTP server (`authkeys.server`)
 

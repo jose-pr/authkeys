@@ -33,6 +33,9 @@ Behaviors:
   nothing, so a transient LDAP/HTTP outage doesn't block logins. A merely *empty*
   result is not an error and never triggers the fallback (and an errored fetch is
   never cached as "empty").
+- **`max_stale`** — seconds an entry may be past its TTL and still be served by
+  `expired_on_error` (unset: no limit). Bounds how long revoked keys keep working
+  while a source is failing.
 - **Per-source TTL** — any `[source:*]` may set its own `expire` (`0` = don't
   cache that source), overriding `[cache] expire`.
 
@@ -47,6 +50,11 @@ authkeys cache warm alice bob       # pre-resolve users (e.g. from cron)
 
 `show`/`purge` need an on-disk backend (an in-memory cache is per-process).
 
+The on-disk cache directory must be owned by, and writable only by, the account
+that runs authkeys: on POSIX an entry, source directory or root that another
+user owns or that group or others can write is ignored with a WARNING, since
+whoever can write there could plant keys for any user.
+
 ## Per-user delegation
 
 A per-user `~/.ssh/authkeys.conf` may grant other principals' keys. Both
@@ -60,6 +68,17 @@ users =
 groups =
     admins
 ```
+
+The file is written by the user it delegates for, so authkeys treats it as
+untrusted:
+
+- `${env:NAME}` is **not** expanded in it (only in the system configuration);
+- like `~/.ssh/authorized_keys` it is read only when it is a regular file (not a
+  symbolic link) of at most 1 MiB, and it and every directory up to the home are
+  owned by the user or root and not writable by group or others (sshd's
+  StrictModes rules). A file that fails is skipped with a WARNING;
+- a missing file is normal and logs nothing; a removed or broken one ends the
+  grant it made, also in a running `serve`.
 
 ## User and group mapping
 

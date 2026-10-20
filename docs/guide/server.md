@@ -5,6 +5,7 @@ resolution over HTTP:
 
 ```
 GET /keys?username=alice&apikey=<key>
+GET /keys?username=alice          (with the header  Authorization: Bearer <key>)
 ```
 
 Bind address, port, path, and API key come from the `[serve]` config section (or
@@ -16,6 +17,8 @@ bind = 127.0.0.1
 port = 8090
 path = /keys
 api_key = ${env:AUTHKEYS_APIKEY}
+request_timeout = 10    # seconds a connection may stay idle
+max_connections = 64    # requests served at once; more get 503
 ```
 
 ## Security
@@ -30,6 +33,11 @@ api_key = ${env:AUTHKEYS_APIKEY}
   upstream fetch is not, so one slow/hung source can't stall other requests.
 - `max_usernames` (default 16) caps how many `?username=` params a single request
   may carry, bounding the work an unauthenticated request can force.
+- Requests are logged as the method, the path without its query string and the
+  status, so the `apikey` parameter never reaches the log. Prefer the
+  `Authorization: Bearer` header anyway: proxies log URLs.
+- A connection idle for `request_timeout` seconds (default 10) is closed, and at
+  most `max_connections` (default 64) requests run at once; the rest get `503`.
 
 ## Delegation
 

@@ -46,8 +46,12 @@ Wire it into `sshd_config`:
 
 ```
 AuthorizedKeysCommand /usr/bin/authkeys resolve %u
-AuthorizedKeysCommandUser nobody
+AuthorizedKeysCommandUser authkeys
 ```
+
+Run the command as a dedicated account that does nothing else (here `authkeys`),
+as sshd_config(5) recommends: with the on-disk cache, whatever runs as that
+account can write cache entries, and so keys.
 
 ## Where to next
 

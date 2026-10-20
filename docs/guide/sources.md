@@ -55,6 +55,13 @@ backend = authkeys.sources.github
 # url = https://gitlab.com/{username}.keys
 ```
 
+!!! warning "Map local names to forge accounts"
+    With the default identity usermap, local account `X` trusts whoever owns the
+    GitHub account `X`. For `root`, `admin`, `git`, `ubuntu` and other common
+    names that is a stranger. Set `[globals] usermap` to a callable that maps
+    each local user to their own forge account (and returns a name that matches
+    no forge account for everyone else).
+
 Fetches `https://github.com/{username}.keys` by default — GitHub's plain-text
 list of a user's public keys, one per line, without comments. `{username}` is
 percent-encoded before it is substituted. Since the fetched keys have no
@@ -72,14 +79,26 @@ basedn = o=Example,c=US
 username_attr = uid
 cert_attr = userCertificate
 tls_verify = system
-# cert_filter = authkeys.sources.ldap.only_auth_keys
+# cert_filter = authkeys.sources.ldap.only_auth_keys   # the default; "none" disables it
 ```
 
 Each matching entry's certificate is parsed and its public key serialized to
 OpenSSH format. The username is escaped before it goes into the LDAP filter, so a
-crafted username cannot inject additional filter clauses. An optional
-`cert_filter` callable `(username, cert) -> bool | str` can drop a certificate or
-supply a custom comment.
+crafted username cannot inject additional filter clauses.
+
+`server` must be an `ldaps://` URL or a bare host name; `ldap://` is refused,
+because it would send the search in clear text. A search the server refuses (no
+bind, missing rights) is an error, so `expired_on_error` applies to it, and a
+search that matches more than one entry is an error too; referrals in the answer
+are ignored.
+
+`cert_filter` is a callable `(username, cert) -> bool | str` that drops a
+certificate (`False`) or supplies its comment (a string). The default,
+`authkeys.sources.ldap.only_auth_keys`, keeps a certificate only when it is within
+its validity period, is not self-signed, its KeyUsage (if present) allows digital
+signature, and its ExtendedKeyUsage (if present) includes clientAuth or
+anyExtendedKeyUsage: directories keep encryption, e-mail and recovery
+certificates in the same attribute. `cert_filter = none` keeps every certificate.
 
 !!! warning "Server-certificate verification"
     The LDAPS channel decides who is allowed to log in, so authkeys **verifies the
