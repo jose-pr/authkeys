@@ -1,15 +1,23 @@
-# Build/dist output and generated docs site
-dist/
-build/
-site/
-*.egg-info/
+# Category rule: nothing dot-prefixed at the repo root gets tracked except the
+# git config files and CI re-included below. Root-anchored on purpose; nested
+# dotfiles are governed by the specific rules below.
+/.*
+!/.gitignore
+!/.gitattributes
+!/.github/
 
-# Agent/harness tooling (never commit these)
+# Private agent config, never committed. No trailing slash on `.agents`: it may
+# be a symlink, which a directory-only pattern would not match. *.local.* is an
+# unshared, machine- or user-specific override.
 .agents
-*.local.md
-CLAUDE.md
-CLAUDE.local.md
-.claude/
+*.local.*
+CLAUDE*
+.claude
+
+# Build/dist output and generated docs site
+build/
+dist/
+site/
 
 # Python
 __pycache__/
@@ -18,13 +26,18 @@ __pycache__/
 .hypothesis/
 .mypy_cache/
 .ruff_cache/
-.coverage
-.coverage.*
+.coverage*
 htmlcov/
+*.egg-info/
+.pyvenv/
 .venv/
 
-# Project-specific
-/.pyenv
-/.env
+# Project-specific scratch
 /_*
 /src/_*
+
+# OS/editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
