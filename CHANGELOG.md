@@ -6,6 +6,24 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Security
+- **The file cache no longer reads or writes outside its directory.** A username
+  or source name that is not one plain path component (empty, `.`, `..`, or
+  holding `/`, `\`, `:` or NUL) is refused, so a username such as `../../etc/x`
+  from `serve` or from a user's `[authorized] users` can no longer read another
+  file as keys or overwrite it with a cache entry.
+- On POSIX the file cache ignores its root, a source directory or an entry that is
+  not owned by the user running authkeys or that group or others can write, and
+  logs one WARNING naming the path. Make the cache directory owned by, and
+  writable only by, the account that runs authkeys.
+
+### Fixed
+- A cache entry that cannot be read or parsed is treated as a miss and logged,
+  instead of aborting the whole resolution with exit status 3.
+- A failed cache write (a full or read-only disk) is a WARNING; the keys the
+  source returned are still printed. Before, they were discarded and the
+  resolver fell back to expired keys or to none.
+
 ### Changed
 - **The `duho` requirement moves to its 0.7.x series: `>=0.7.4,<0.8.0`** (was
   `>=0.6.0,<0.7.0`). The floor is 0.7.4 because the entry now uses

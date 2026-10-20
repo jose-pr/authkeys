@@ -356,36 +356,54 @@ class AuthKeys:
         """
         cache_key = (uid, src_name)
         src_ttl = getattr(src, "expire", None)
-        if self.cache and src.cached:
-            with self._lock:
-                cached = self.cache.get(cache_key, ttl=src_ttl)
+        use_cache = bool(self.cache and src.cached)
+        if use_cache:
+            cached = self._cached_keys(cache_key, ttl=src_ttl)
             if cached is not None:
                 LOGGER.info(f"Using cached source: {src_name} for {usr} -> {uid}")
-                return list(AuthorizedKey.parse_all(cached))
+                return cached
 
         try:
             LOGGER.info(f"Using source: {src_name} for {usr} -> {uid}")
             keys = self._parse_source_lines(
                 src_name, uid, src.backend.authorized_keys(uid), src.sanitize
             )
-            if self.cache and src.cached:
-                with self._lock:
-                    self.cache[cache_key] = "\n".join(str(k) for k in keys)
-            return keys
         except Exception as e:
             LOGGER.error(
                 f"Error while loading keys for {usr} from {src_name}\n{e}"
             )
             if self.use_expired_on_error and self.cache:
-                with self._lock:
-                    expired = self.cache.get(cache_key, include_expired=True)
+                expired = self._cached_keys(cache_key, include_expired=True)
                 if expired:
                     LOGGER.warning(
                         f"Falling back to expired keys for {src_name}: "
                         f"{usr} -> {uid}"
                     )
-                    return list(AuthorizedKey.parse_all(expired))
+                    return expired
             return []
+
+        # The cache only saves work: a failed write must not cost the keys.
+        if use_cache:
+            try:
+                with self._lock:
+                    self.cache[cache_key] = "\n".join(str(k) for k in keys)
+            except Exception as e:
+                LOGGER.warning(f"Could not cache keys for {uid} from {src_name}: {e}")
+        return keys
+
+    def _cached_keys(
+        self, cache_key: "tuple", **options
+    ) -> "Optional[List[AuthorizedKey]]":
+        """Read and parse one cache entry; an unreadable entry is a miss."""
+        try:
+            with self._lock:
+                cached = self.cache.get(cache_key, **options)
+            if cached is None:
+                return None
+            return list(AuthorizedKey.parse_all(cached))
+        except Exception as e:
+            LOGGER.warning(f"Ignoring unreadable cache entry {cache_key!r}: {e}")
+            return None
 
     def authorized_keys(self, username: str) -> "Iterable[AuthorizedKey]":
         usr_config = self.users.get(username) or UserConfig([username])

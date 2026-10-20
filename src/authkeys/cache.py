@@ -5,9 +5,14 @@ timestamp. :class:`AuthKeysCache` applies the TTL; backends only persist and
 retrieve ``(value, timestamp)`` pairs.
 """
 
+import os
 from pathlib import Path
 from time import time
-from typing import Iterable, Optional, Tuple
+from typing import Iterable, Optional, Set, Tuple
+
+from duho import logging
+
+LOGGER = logging.getLogger("authkeys.cache")
 
 # (uid, source_name)
 CacheKey = Tuple[str, str]
@@ -80,11 +85,52 @@ class AuthKeysCacheMemBackend(AuthKeysCacheBackend):
         self.db.pop(key, None)
 
 
+def _check_component(what: str, name: str) -> None:
+    """Refuse a key part that is not exactly one plain path component.
+
+    The uid can come from a ``serve`` request or a user's delegation file, so
+    ``..``, a separator or a drive (``C:x`` on Windows) must not leave the cache.
+    """
+    if (
+        not name
+        or name in (".", "..")
+        or any(c in name for c in ("/", "\\", ":", "\x00"))
+    ):
+        raise ValueError(f"cache {what} is not a plain name: {name!r}")
+
+
 class AuthKeysCacheFileBackend(AuthKeysCacheBackend):
-    """Cache keys under ``<path>/<source>/<uid>``; mtime is the timestamp."""
+    """Cache keys under ``<path>/<source>/<uid>``; mtime is the timestamp.
+
+    On POSIX an entry, its source directory or the root that is not owned by the
+    running user, or that group or others may write, is ignored: whoever can
+    write there could plant keys for any user.
+    """
 
     def __init__(self, path: "str | Path") -> None:
         self.path = Path(path)
+        self._warned: "Set[str]" = set()
+
+    def _trusted(self, path: Path) -> bool:
+        if not hasattr(os, "geteuid"):
+            return True
+        try:
+            st = path.stat()
+        except FileNotFoundError:
+            return True
+        if st.st_uid == os.geteuid() and not st.st_mode & 0o022:
+            return True
+        if str(path) not in self._warned:
+            self._warned.add(str(path))
+            LOGGER.warning(
+                f"Ignoring cache path {path}: not owned by this user or "
+                f"writable by group or others"
+            )
+        return False
+
+    def _within_root(self, path: Path) -> bool:
+        root = os.path.abspath(self.path)
+        return os.path.commonpath([root, os.path.abspath(path)]) == root
 
     @classmethod
     def from_config(cls, config) -> "AuthKeysCacheFileBackend":
@@ -97,10 +143,19 @@ class AuthKeysCacheFileBackend(AuthKeysCacheBackend):
         )
 
     def cached_entry_path(self, key: CacheKey) -> "Optional[Path]":
+        """Return the entry's path, creating its source directory.
+
+        Raises ``ValueError`` for a uid or source that is not a plain name, and
+        returns ``None`` when the cache root is missing or not trusted.
+        """
         uid, src = key
-        if not (self.path and self.path.exists()):
+        _check_component("uid", uid)
+        _check_component("source", src)
+        if not (self.path and self.path.exists()) or not self._trusted(self.path):
             return None
         src_cache = self.path / src
+        if not self._within_root(src_cache / uid):
+            raise ValueError(f"cache entry escapes the cache root: {key!r}")
         # Cache entries reveal which principals a host trusts -> keep them private.
         src_cache.mkdir(exist_ok=True)
         try:
@@ -111,18 +166,22 @@ class AuthKeysCacheFileBackend(AuthKeysCacheBackend):
 
     def __getitem__(self, key: CacheKey) -> "Optional[CacheEntry]":
         cached = self.cached_entry_path(key)
-        if cached and cached.exists():
+        if (
+            cached
+            and cached.exists()
+            and self._trusted(cached.parent)
+            and self._trusted(cached)
+        ):
             return cached.read_text(), cached.stat().st_mtime
         return None
 
     def __setitem__(self, key: CacheKey, value: str) -> None:
         cached = self.cached_entry_path(key)
-        if not cached:
+        if not cached or not self._trusted(cached.parent):
             return
         # Write atomically (temp file in the same dir + os.replace) so a concurrent
         # reader -- including a separate sshd-spawned process, which the in-process
         # lock does not cover -- never sees a truncated entry.
-        import os
         import tempfile
 
         fd, tmp = tempfile.mkstemp(dir=str(cached.parent), prefix=".tmp-")
