@@ -1,6 +1,7 @@
 """HTTP key server: routing, auth (constant-time), params, threading."""
 
 import threading
+import time
 import urllib.error
 import urllib.request
 
@@ -32,7 +33,7 @@ def server():
     )
     auth = AuthKeys()
     auth.load_config(conf)
-    srv = KeyServer(auth, bind="127.0.0.1", port=0, api_key="secret", path="/keys")
+    srv = KeyServer(auth, "127.0.0.1:0", api_key="secret", path="/keys")
     thread = threading.Thread(target=srv.serve_forever, daemon=True)
     thread.start()
     host, port = srv.server_address[:2]
@@ -104,7 +105,7 @@ def test_auth_disabled_when_no_api_key():
     )
     auth = AuthKeys()
     auth.load_config(conf)
-    srv = KeyServer(auth, bind="127.0.0.1", port=0, api_key=None)
+    srv = KeyServer(auth, "127.0.0.1:0", api_key=None)
     assert srv.check_auth([]) is True
 
 
@@ -118,7 +119,7 @@ def test_require_auth_with_empty_api_key_raises():
     auth = AuthKeys()
     auth.load_config(conf)
     with pytest.raises(ValueError):
-        KeyServer(auth, bind="127.0.0.1", port=0, api_key="", require_auth=True)
+        KeyServer(auth, "127.0.0.1:0", api_key="", require_auth=True)
 
 
 def test_require_auth_with_set_api_key_ok():
@@ -127,7 +128,7 @@ def test_require_auth_with_set_api_key_ok():
     )
     auth = AuthKeys()
     auth.load_config(conf)
-    srv = KeyServer(auth, bind="127.0.0.1", port=0, api_key="secret", require_auth=True)
+    srv = KeyServer(auth, "127.0.0.1:0", api_key="secret", require_auth=True)
     assert srv.check_auth(["secret"]) is True
 
 
@@ -136,7 +137,7 @@ def _start(**options):
     auth.load_config(
         Settings.from_mapping({"source": {"test": {"backend": "test-server-onekey"}}})
     )
-    srv = KeyServer(auth, bind="127.0.0.1", port=0, api_key="secret", **options)
+    srv = KeyServer(auth, "127.0.0.1:0", api_key="secret", **options)
     thread = threading.Thread(target=srv.serve_forever, daemon=True)
     thread.start()
     return srv, thread
@@ -197,3 +198,179 @@ def test_connections_over_the_limit_get_503():
                 assert second.recv(64).startswith(b"HTTP/1.1 503")
     finally:
         _stop(srv, thread)
+
+
+# --- listening through netimps, and TLS -----------------------------------------
+
+
+def _auth():
+    auth = AuthKeys()
+    auth.load_config(
+        Settings.from_mapping({"source": {"test": {"backend": "test-server-onekey"}}})
+    )
+    return auth
+
+
+def _ipv6_loopback():
+    import socket
+
+    if not socket.has_ipv6:
+        return False
+    try:
+        with socket.socket(socket.AF_INET6) as s:
+            s.bind(("::1", 0))
+        return True
+    except OSError:
+        return False
+
+
+@pytest.mark.skipif(not _ipv6_loopback(), reason="no IPv6 loopback on this host")
+def test_one_spec_serves_ipv4_and_ipv6():
+    from authkeys.server import bind_servers, serve
+
+    servers = bind_servers(_auth(), "127.0.0.1:0,[::1]:0", api_key="secret")
+    assert [s.socket.family.name for s in servers] == ["AF_INET", "AF_INET6"]
+    assert servers[1].url.startswith("http://[::1]:")
+    runner = threading.Thread(target=serve, args=(servers,), daemon=True)
+    runner.start()
+    try:
+        for server in servers:
+            status, body = _get(server.url + "?username=alice&apikey=secret")
+            assert status == 200 and RSA in body
+    finally:
+        servers[0].shutdown()
+        runner.join(timeout=5)
+    assert not runner.is_alive()
+
+
+def test_key_server_takes_one_address():
+    with pytest.raises(ValueError, match="bind_servers"):
+        KeyServer(_auth(), "127.0.0.1:0,127.0.0.2:0")
+
+
+def test_bind_servers_closes_what_it_opened_on_failure():
+    import socket
+
+    from authkeys.server import bind_servers
+
+    taken = socket.socket()
+    taken.bind(("127.0.0.1", 0))
+    taken.listen(1)
+    try:
+        port = taken.getsockname()[1]
+        with pytest.raises(OSError):
+            bind_servers(_auth(), f"127.0.0.1:0,127.0.0.1:{port}")
+    finally:
+        taken.close()
+
+
+@pytest.fixture
+def tls_files(tmp_path):
+    pytest.importorskip("cryptography")
+    import datetime
+    import ipaddress
+
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.x509.oid import NameOID
+
+    key = ec.generate_private_key(ec.SECP256R1())
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "localhost")])
+    now = datetime.datetime.now(datetime.timezone.utc)
+    cert = (
+        x509.CertificateBuilder()
+        .subject_name(name)
+        .issuer_name(name)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now - datetime.timedelta(days=1))
+        .not_valid_after(now + datetime.timedelta(days=1))
+        .add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True)
+        .add_extension(
+            x509.SubjectKeyIdentifier.from_public_key(key.public_key()), critical=False
+        )
+        .add_extension(
+            x509.AuthorityKeyIdentifier.from_issuer_public_key(key.public_key()),
+            critical=False,
+        )
+        .add_extension(
+            x509.SubjectAlternativeName(
+                [x509.IPAddress(ipaddress.ip_address("127.0.0.1"))]
+            ),
+            critical=False,
+        )
+        .sign(key, hashes.SHA256())
+    )
+    pem, keyfile = tmp_path / "tls.pem", tmp_path / "tls.key"
+    pem.write_bytes(cert.public_bytes(serialization.Encoding.PEM))
+    keyfile.write_bytes(
+        key.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.PKCS8,
+            serialization.NoEncryption(),
+        )
+    )
+    return str(pem), str(keyfile)
+
+
+def test_https_with_a_server_context(tls_files):
+    import ssl
+
+    import sslcontext
+
+    pem, key = tls_files
+    context = sslcontext.create_context("server", certificate=pem, key=key)
+    srv = KeyServer(_auth(), "127.0.0.1:0", api_key="secret", ssl_context=context)
+    thread = threading.Thread(target=srv.serve_forever, args=(0.05,), daemon=True)
+    thread.start()
+    try:
+        assert srv.url.startswith("https://127.0.0.1:")
+        client = ssl.create_default_context(cafile=pem)
+        opener = urllib.request.build_opener(
+            urllib.request.ProxyHandler({}), urllib.request.HTTPSHandler(context=client)
+        )
+        with opener.open(srv.url + "?username=alice&apikey=secret", timeout=5) as resp:
+            assert resp.status == 200 and RSA in resp.read().decode()
+        with pytest.raises(Exception):
+            _get(
+                srv.url.replace("https://", "http://") + "?username=alice&apikey=secret"
+            )
+    finally:
+        srv.shutdown()
+        srv.server_close()
+        thread.join(timeout=2)
+
+
+def test_cli_serves_https_from_certificate_and_key(tls_files, tmp_path, monkeypatch):
+    from authkeys.cli import main
+
+    seen = {}
+    import authkeys.server
+
+    monkeypatch.setattr(
+        authkeys.server,
+        "serve",
+        lambda servers: seen.update(urls=[s.url for s in servers])
+        or [s.server_close() for s in servers],
+    )
+    pem, key = tls_files
+    conf = tmp_path / "a.cfg"
+    conf.write_text(f"[serve]\ncertificate = {pem!r}\nkey = {key!r}\n")
+    assert main(["--config", str(conf), "serve", "--listen", "127.0.0.1:0"]) == 0
+    assert seen["urls"][0].startswith("https://127.0.0.1:")
+
+
+def test_clear_text_on_a_public_address_warns(caplog):
+    import logging
+
+    from authkeys.server import serve
+
+    srv = KeyServer(_auth(), "0.0.0.0:0", api_key="secret")
+    runner = threading.Thread(target=serve, args=(srv,), daemon=True)
+    with caplog.at_level(logging.WARNING, logger="authkeys.server"):
+        runner.start()
+        time.sleep(0.2)
+        srv.shutdown()
+        runner.join(timeout=5)
+    assert any("without TLS" in r.getMessage() for r in caplog.records)

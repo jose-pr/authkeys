@@ -1,7 +1,7 @@
 # HTTP key server
 
 For hosts that can't run the command locally, `authkeys serve` exposes the same
-resolution over HTTP:
+resolution over HTTP or HTTPS:
 
 ```
 GET /keys?username=alice&apikey=<key>
@@ -9,23 +9,43 @@ GET /keys?username=alice          (with the header  Authorization: Bearer <key>)
 ```
 
 The options come from the `[serve]` table, from `AUTHKEYS_SERVE_<OPTION>`
-variables, or from the command line (`--bind`, `--port`, `--path`,
-`--max-usernames`, `--request-timeout`, `--max-connections`); the command line
-wins, then the variable, then the file. The API key comes only from the file:
+variables, or from the command line (`--listen`, `--certificate`, `--key`,
+`--path`, `--max-usernames`, `--request-timeout`, `--max-connections`); the
+command line wins, then the variable, then the file. The API key comes only from
+the file:
 
 ```toml
 [serve]
-bind = "127.0.0.1"
-port = 8090
+listen = "127.0.0.1:8090"
 path = "/keys"
 api_key = "${env.AUTHKEYS_APIKEY}"
+certificate = "/etc/authkeys/tls.pem"   # with key: serve HTTPS
+key = "/etc/authkeys/tls.key"
 request_timeout = 10    # seconds a connection may stay idle
 max_connections = 64    # requests served at once; more get 503
 ```
 
 ```bash
-authkeys -c /etc/authkeys.cfg serve --bind 0.0.0.0
+authkeys -c /etc/authkeys.cfg serve --listen "[::]:8443,0.0.0.0:8443"
 ```
+
+## Where it listens
+
+`listen` is a [netimps](https://github.com/jose-pr/netimps) listen
+specification: `host:port`, `[v6]:port`, `:port` (every IPv4 address), an
+interface name (`eth1:8090`), or several of them separated by commas — one socket
+each. A missing port is 8090. A specification that names no address, a port out
+of range or a port already in use stops `serve` with one line on stderr (status
+3).
+
+## TLS
+
+With `certificate` and `key` (PEM files; the certificate file may hold the chain)
+`serve` speaks HTTPS. Without TLS the keys and the API key cross the network in
+clear text, and whoever sits in the middle decides who logs in on the hosts that
+fetch keys: `serve` logs a warning when it listens on a non-loopback address
+without TLS. Either configure a certificate or keep `serve` on loopback behind a
+TLS proxy.
 
 ## Security
 
@@ -34,7 +54,7 @@ authkeys -c /etc/authkeys.cfg serve --bind 0.0.0.0
 - **Fail closed.** If the `api_key` line is present but resolves empty (for
   example an unset environment variable), `authkeys serve` refuses to start rather
   than silently running unauthenticated. Remove the line entirely to intentionally
-  run without authentication — and then bind only to a trusted interface.
+  run without authentication — and then listen only on a trusted interface.
 - The server resolves concurrently; the cache read/write is locked but the
   upstream fetch is not, so one slow/hung source can't stall other requests.
 - `max_usernames` (default 16) caps how many `?username=` params a single request

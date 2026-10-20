@@ -27,7 +27,12 @@ classifiers = [
     "Topic :: System :: Systems Administration :: Authentication/Directory",
     "Typing :: Typed",
 ]
-dependencies = ["anycfg>=0.15.0,<0.16", "duho>=0.7.4,<0.8.0"]
+dependencies = [
+    "anycfg>=0.15.0,<0.16",
+    "duho>=0.7.4,<0.8.0",
+    "netimps>=0.4.0,<0.5",
+    "sslcontext>=2.1.0,<3",
+]
 
 [project.optional-dependencies]
 http = ["syshttp>=0.1.0,<0.2"]

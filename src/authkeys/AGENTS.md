@@ -244,11 +244,15 @@ Built on duho (`ConfigArgs` root, `_default_subcommand_ = "resolve"`,
   any error is one line on stderr and status 3. `--format
   {authorized_keys,json}` (`json`: a list of `{type,key,comment,options}`).
   `check` raises its logger to DEBUG so per-source tracing reaches stderr.
-- **`serve`** — `--bind` (`127.0.0.1`), `--port` (`8090`), `--path` (`/keys`),
-  `--max-usernames` (16), `--request-timeout` (10), `--max-connections` (64);
-  each also from `AUTHKEYS_SERVE_<OPTION>` and from the `[serve]` table (CLI >
-  variable > file > default). The API key only from `[serve] api_key`; a
-  present `api_key` that resolved empty refuses to start (status 1).
+- **`serve`** — `--listen/-l` (a netimps listen specification, default
+  `127.0.0.1:8090`: `host:port`, `[v6]:port`, `:port` (all IPv4 addresses), an
+  interface name, several comma-separated), `--certificate`/`--key` (PEM; serve
+  HTTPS), `--path` (`/keys`), `--max-usernames` (16), `--request-timeout` (10),
+  `--max-connections` (64); each also from `AUTHKEYS_SERVE_<OPTION>` and from the
+  `[serve]` table (CLI > variable > file > default). The API key only from
+  `[serve] api_key`; a present `api_key` that resolved empty refuses to start
+  (status 1). A bad listen spec or a socket that cannot be bound is one line,
+  status 3. Logs a WARNING for a non-loopback address served without TLS.
 - **`cache {show,purge,warm}`** — `show` lists entries with their age; `purge`
   (`--expired` by TTL, `--all`, else `--user`/`--source`; `--dry-run/-n` lists
   without removing); `warm` (positional `users` or `--user`). Status 3 when no
@@ -257,9 +261,15 @@ Built on duho (`ConfigArgs` root, `_default_subcommand_ = "resolve"`,
 
 ## HTTP server (`authkeys.server`)
 
-- **`KeyServer(authkeys: AuthKeys, *, bind="127.0.0.1", port=8090,
-  api_key=None, path="/keys", max_usernames=16, require_auth=False,
-  request_timeout=10.0, max_connections=64)`** — a threaded HTTP server. A
+- **`KeyServer(authkeys: AuthKeys, listen="127.0.0.1:8090", *, api_key=None,
+  path="/keys", max_usernames=16, require_auth=False, request_timeout=10.0,
+  max_connections=64, ssl_context=None)`** — a threaded HTTP server on ONE
+  socket bound through `netimps.bind` for one listen entry (a str naming several
+  is `ValueError`; port 8090 by default; `OSError`, e.g.
+  `netimps.AddressInUseError`, when it cannot bind). `ssl_context` (server side,
+  e.g. `sslcontext.create_context("server", certificate=..., key=...)`) serves
+  HTTPS; the handshake runs in the connection's thread under its timeout.
+  `url` property: `http(s)://host:port/path`, IPv6 in brackets. A
   connection idle for `request_timeout` seconds is closed; past
   `max_connections` concurrent requests a connection gets `503`. Requests are
   logged (logger `authkeys.server`, INFO) as method, path without query,
@@ -271,8 +281,14 @@ Built on duho (`ConfigArgs` root, `_default_subcommand_ = "resolve"`,
   else `400`) resolved through the delegation-and-cache path, sshd wire format.
   `401` on a missing/invalid key when auth is on; `400` on a missing `username`;
   `404` off the path.
-- **`serve(server: KeyServer) -> None`** — blocks until interrupted, then
-  closes the socket; warns on start when `api_key` is unset.
+- **`bind_servers(authkeys, listen="127.0.0.1:8090", **options) ->
+  list[KeyServer]`** — one server per listen entry, all bound before it
+  returns; on a failure the ones already bound are closed and the error raised.
+- **`serve(servers: KeyServer | Sequence[KeyServer]) -> None`** — runs them
+  until interrupted (the first in the calling thread), then shuts all down and
+  closes them; warns when `api_key` is unset and for a non-loopback address
+  without TLS.
+- **`DEFAULT_PORT = 8090`**.
 
 ## Usermaps / group members / utils
 
@@ -294,7 +310,7 @@ Built on duho (`ConfigArgs` root, `_default_subcommand_ = "resolve"`,
 | Variable | Sets | Default |
 | --- | --- | --- |
 | `AUTHKEYS_CONFIG` | the configuration file (empty: none) | `/etc/authkeys.cfg` |
-| `AUTHKEYS_SERVE_BIND`, `_PORT`, `_PATH`, `_MAX_USERNAMES`, `_REQUEST_TIMEOUT`, `_MAX_CONNECTIONS` | the `serve` options of the same name | the `[serve]` table, else the option's default |
+| `AUTHKEYS_SERVE_LISTEN`, `_CERTIFICATE`, `_KEY`, `_PATH`, `_MAX_USERNAMES`, `_REQUEST_TIMEOUT`, `_MAX_CONNECTIONS` | the `serve` options of the same name | the `[serve]` table, else the option's default |
 | `AUTHKEYS_MCP` | `stdio` serves the commands as MCP tools (duho) | unset |
 | the http/github source's `token_env` | that source's bearer token (**secret**) | none |
 | `HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY`, `CA_BUNDLE`, `SYSHTTP_*` | read by syshttp for the http/github sources when `proxy`/`verify` are unset | the system's configuration |

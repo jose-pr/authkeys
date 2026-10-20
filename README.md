@@ -32,7 +32,7 @@ pip install authkeys[all]       # everything
 ```bash
 authkeys resolve alice          # print alice's authorized keys
 authkeys alice                  # 'resolve' is the default command
-authkeys -c /etc/authkeys.cfg serve --bind 127.0.0.1 --port 8090
+authkeys -c /etc/authkeys.cfg serve --listen 127.0.0.1:8090
 ```
 
 Wire it into `sshd_config`:
@@ -125,12 +125,13 @@ resolution over HTTP:
 GET /keys?username=alice&apikey=<key>
 ```
 
-Bind address, port, path and the limits come from the `[serve]` table, from
+Where it listens (`--listen`, netimps syntax, IPv6 included), TLS
+(`certificate`/`key`), the path and the limits come from the `[serve]` table, from
 `AUTHKEYS_SERVE_<OPTION>` or from the command line; the API key only from
 `[serve] api_key`. It is compared in constant time and may also be sent as
 `Authorization: Bearer <key>`; pull it from the environment with
 `api_key = "${env.AUTHKEYS_APIKEY}"` to keep it off disk. If
-no API key is configured, authentication is disabled — only bind to a trusted
+no API key is configured, authentication is disabled — only listen on a trusted
 interface in that case.
 
 ## License

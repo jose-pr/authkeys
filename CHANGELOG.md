@@ -28,10 +28,23 @@ API. A configuration written for 0.4 does not load: convert it as below.
   there must exist (status 2). `authkeys` with no argument, and an option after
   the user (`authkeys alice -c FILE`), are usage errors; `authkeys resolve`
   resolves the current user.
-- `serve` takes `--path`, `--max-usernames`, `--request-timeout` and
-  `--max-connections` as well as `--bind`/`--port`, and each option can come from
-  `AUTHKEYS_SERVE_<OPTION>` (command line > variable > `[serve]` > default). A
-  malformed value is a one-line usage error (status 2) instead of a traceback.
+- **`serve` listens where `--listen` says** (`[serve] listen`), a netimps listen
+  specification such as `127.0.0.1:8090`, `[::1]:8090`, `:8090` or several
+  comma-separated: IPv6 works, and each entry is its own socket. `--bind` and
+  `--port` (`[serve] bind`, `port`) are gone; `listen = "0.0.0.0:8090"` replaces
+  them. A bad specification, a port out of range or a port in use is one line on
+  stderr with status 3 instead of a traceback.
+- **`serve` can speak HTTPS**: `--certificate` and `--key` (`[serve]
+  certificate`, `key`), through sslcontext. Without TLS on a non-loopback
+  address it logs a warning.
+- `serve` also takes `--path`, `--max-usernames`, `--request-timeout` and
+  `--max-connections`, and each option can come from `AUTHKEYS_SERVE_<OPTION>`
+  (command line > variable > `[serve]` > default). A malformed value is a
+  one-line usage error (status 2) instead of a traceback.
+- `authkeys.server.KeyServer(authkeys, listen, *, ..., ssl_context=None)` binds
+  one socket through netimps (was `bind=`/`port=`); `bind_servers()` builds one
+  per listen entry and `serve()` takes one server or a list. netimps and
+  sslcontext are new dependencies.
 - **The http and github sources use syshttp instead of requests** (the `http`
   extra now installs syshttp). The OS trust store verifies servers (truststore
   on Python 3.10+, instead of certifi); the system's proxy configuration (proxy
@@ -82,6 +95,8 @@ API. A configuration written for 0.4 does not load: convert it as below.
 | `enabled = 0`, `expired_on_error = 1` | `enabled = false`, `expired_on_error = true` |
 | `expire = 3600` | `expire = 3600` (a number, unquoted) |
 | `api_key = ${env:AUTHKEYS_APIKEY}` | `api_key = "${env.AUTHKEYS_APIKEY}"` |
+| `[serve] bind = 0.0.0.0` and `port = 8090` | `[serve] listen = "0.0.0.0:8090"` |
+| `authkeys serve --bind H --port P` | `authkeys serve --listen H:P` |
 | `[source:http] address = https://...` | `[source.http] url = "https://..."` |
 | `credentials = cert.pem,key.pem` | `certificate = "cert.pem"` and `key = "key.pem"` |
 | `verify = false` | `verify = false` (a boolean) or `verify = "/path/ca.pem"` |

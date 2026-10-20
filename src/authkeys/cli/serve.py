@@ -20,13 +20,17 @@ class Serve(LoggingArgs, Cmd):
     _parsername_ = "serve"
     _logger_name_ = "authkeys.server"
 
-    bind: "Arg[str, Meta(env='AUTHKEYS_SERVE_BIND')]" = "127.0.0.1"
-    "Address to bind"
-    ("--bind", "-b")
+    listen: "Arg[str, Meta(env='AUTHKEYS_SERVE_LISTEN')]" = "127.0.0.1:8090"
+    "Where to listen: host:port, [v6]:port or :port, comma-separated (port 8090 by default)"
+    ("--listen", "-l")
 
-    port: "Arg[int, Meta(env='AUTHKEYS_SERVE_PORT')]" = 8090
-    "Port to listen on"
-    ("--port", "-p")
+    certificate: "Arg[_ty.Optional[str], Meta(env='AUTHKEYS_SERVE_CERTIFICATE')]" = None
+    "PEM certificate (chain) to serve HTTPS with"
+    ("--certificate",)
+
+    key: "Arg[_ty.Optional[str], Meta(env='AUTHKEYS_SERVE_KEY')]" = None
+    "PEM private key for --certificate"
+    ("--key",)
 
     path: "Arg[str, Meta(env='AUTHKEYS_SERVE_PATH')]" = "/keys"
     "URL path that serves keys"
@@ -45,7 +49,7 @@ class Serve(LoggingArgs, Cmd):
     ("--max-connections",)
 
     def __call__(self) -> "int | None":
-        from ..server import KeyServer, serve
+        from ..server import bind_servers, serve
 
         settings = settings_for(self)
         auth = AuthKeys()
@@ -62,16 +66,28 @@ class Serve(LoggingArgs, Cmd):
                 "'api_key' line to run without authentication.",
                 1,
             )
-        server = KeyServer(
-            auth,
-            bind=self.bind,
-            port=self.port,
-            api_key=api_key,
-            path=self.path,
-            max_usernames=self.max_usernames,
-            require_auth=has_key_line,
-            request_timeout=self.request_timeout,
-            max_connections=self.max_connections,
-        )
-        serve(server)
+        context = None
+        if self.key and not self.certificate:
+            raise CommandError("authkeys serve: --key needs --certificate", 2)
+        try:
+            if self.certificate:
+                import sslcontext
+
+                context = sslcontext.create_context(
+                    "server", certificate=self.certificate, key=self.key
+                )
+            servers = bind_servers(
+                auth,
+                self.listen,
+                api_key=api_key,
+                path=self.path,
+                max_usernames=self.max_usernames,
+                require_auth=has_key_line,
+                request_timeout=self.request_timeout,
+                max_connections=self.max_connections,
+                ssl_context=context,
+            )
+        except (ValueError, OSError) as e:
+            raise CommandError(f"authkeys serve: {e}", 3) from None
+        serve(servers)
         return 0

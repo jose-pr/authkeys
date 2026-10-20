@@ -237,44 +237,76 @@ def test_a_named_file_that_does_not_exist_is_a_usage_error(tmp_path):
 def _capture_server(monkeypatch):
     seen = {}
 
-    class Fake:
-        def __init__(self, auth, **options):
-            seen.update(options)
+    def fake_bind(auth, listen, **options):
+        seen.update(options, listen=listen)
+        return []
 
     import authkeys.server
 
-    monkeypatch.setattr(authkeys.server, "KeyServer", Fake)
-    monkeypatch.setattr(authkeys.server, "serve", lambda server: None)
+    monkeypatch.setattr(authkeys.server, "bind_servers", fake_bind)
+    monkeypatch.setattr(authkeys.server, "serve", lambda servers: None)
     return seen
 
 
 @pytest.mark.parametrize(
     "argv,env,expected",
     [
-        ([], None, 8090),  # default
-        ([], "", 9001),  # file
-        ([], "9002", 9002),  # env beats file
-        (["--port", "9003"], "9002", 9003),  # command line beats env
+        ([], None, "127.0.0.1:8090"),  # default
+        ([], "", "127.0.0.1:9001"),  # file
+        ([], "[::1]:9002", "[::1]:9002"),  # env beats file
+        (["--listen", ":9003"], "[::1]:9002", ":9003"),  # command line beats env
     ],
 )
-def test_serve_port_precedence(tmp_path, monkeypatch, argv, env, expected):
+def test_serve_listen_precedence(tmp_path, monkeypatch, argv, env, expected):
     seen = _capture_server(monkeypatch)
     conf = tmp_path / "authkeys.cfg"
-    conf.write_text("" if env is None else "[serve]\nport = 9001\n")
-    monkeypatch.delenv("AUTHKEYS_SERVE_PORT", raising=False)
+    conf.write_text("" if env is None else '[serve]\nlisten = "127.0.0.1:9001"\n')
+    monkeypatch.delenv("AUTHKEYS_SERVE_LISTEN", raising=False)
     if env:
-        monkeypatch.setenv("AUTHKEYS_SERVE_PORT", env)
+        monkeypatch.setenv("AUTHKEYS_SERVE_LISTEN", env)
     assert run(["--config", str(conf), "serve", *argv]) == 0
-    assert seen["port"] == expected
+    assert seen["listen"] == expected
 
 
-def test_serve_with_a_malformed_port_is_one_line(tmp_path, monkeypatch, capsys):
+def test_serve_with_a_malformed_option_is_one_line(tmp_path, monkeypatch, capsys):
     _capture_server(monkeypatch)
     conf = tmp_path / "authkeys.cfg"
-    conf.write_text('[serve]\nport = "abc"\n')
+    conf.write_text('[serve]\nmax_usernames = "abc"\n')
     assert run(["--config", str(conf), "serve"]) == 2
     err = capsys.readouterr().err
-    assert "Traceback" not in err and "port" in err
+    assert "Traceback" not in err and "max_usernames" in err.replace("-", "_")
+
+
+@pytest.mark.parametrize(
+    "listen,message",
+    [("127.0.0.1:99999", "port out of range"), ("", "names no address")],
+)
+def test_serve_with_a_bad_listen_spec_is_one_line(tmp_path, caplog, listen, message):
+    conf = tmp_path / "authkeys.cfg"
+    conf.write_text("")
+    with caplog.at_level("ERROR", logger="authkeys"):
+        assert run(["--config", str(conf), "serve", "--listen", listen]) == 3
+    assert any(message in r.getMessage() for r in caplog.records)
+
+
+def test_serve_with_a_taken_port_is_one_line(tmp_path, caplog):
+    import socket
+
+    taken = socket.socket()
+    taken.bind(("127.0.0.1", 0))
+    taken.listen(1)
+    try:
+        conf = tmp_path / "authkeys.cfg"
+        conf.write_text("")
+        port = taken.getsockname()[1]
+        with caplog.at_level("ERROR", logger="authkeys"):
+            assert (
+                run(["--config", str(conf), "serve", "--listen", f"127.0.0.1:{port}"])
+                == 3
+            )
+        assert any("in use" in r.getMessage() for r in caplog.records)
+    finally:
+        taken.close()
 
 
 def test_broken_config_file_exits_3(tmp_path, caplog, capsys):

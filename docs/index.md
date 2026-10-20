@@ -39,7 +39,7 @@ pip install authkeys[all]       # everything
 ```bash
 authkeys resolve alice          # print alice's authorized keys
 authkeys alice                  # 'resolve' is the default command
-authkeys -c /etc/authkeys.cfg serve --bind 127.0.0.1 --port 8090
+authkeys -c /etc/authkeys.cfg serve --listen 127.0.0.1:8090
 ```
 
 Wire it into `sshd_config`:

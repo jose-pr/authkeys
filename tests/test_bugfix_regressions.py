@@ -39,7 +39,7 @@ def _serve_argv(config_text, tmp_path):
     p.write_text(config_text)
     from authkeys.cli import main
 
-    return main(["--config", str(p), "serve", "--port", "0"])
+    return main(["--config", str(p), "serve", "--listen", "127.0.0.1:0"])
 
 
 def test_serve_fails_closed_on_empty_api_key(tmp_path, monkeypatch, capsys, caplog):
