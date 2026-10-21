@@ -93,7 +93,7 @@ class KeyServer(ThreadingHTTPServer):
         """
         # Fail closed: when the caller asserts an api_key MUST be set (e.g. the
         # CLI, when `[serve] api_key` is present in config) but it resolved
-        # empty (unset ${env:...}, typo), refuse construction rather than
+        # empty (unset ${env.NAME}, typo), refuse construction rather than
         # silently starting with authentication disabled.
         if require_auth and not api_key:
             raise ValueError(

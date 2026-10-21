@@ -79,6 +79,21 @@ API. A configuration written for 0.4 does not load: convert it as below.
 - `completion` needs the shell (`bash`, `zsh`, `fish`, or the new `powershell`).
 - `cache` gains `purge --dry-run` (`-n`); an unknown action is a usage error.
 - The console script calls `authkeys.cli:main` (was `authkeys.cli:run`).
+- **The `duho` requirement moves to its 0.7.x series: `>=0.7.4,<0.8.0`** (was
+  `>=0.6.0,<0.7.0`). The floor is 0.7.4 because the entry now uses
+  `duho.run(..., exit=False)` and the root's `_report_error_`, both added in
+  that patch.
+- The `authkeys` entry (`authkeys.cli.main`, the console script) goes through
+  `duho.run(..., exit=False)` and always returns an `int`. Exit statuses and
+  output are unchanged, with three differences: Ctrl-C outside `resolve`,
+  `check` and `serve` (which handle it themselves) ends with status 130 and no
+  traceback; a broken pipe there ends with status 1, quietly; and `serve`'s
+  refusal to start without a usable `api_key` is returned as status 1 with the
+  same message on stderr instead of raised as `SystemExit`.
+- `authkeys cache` reports "No cache configured", an unsupported backend action
+  and an unknown action as `CommandError`s (statuses 3, 3 and 2). The log record
+  is the same: logger `authkeys`, level `ERROR`, the same message. With
+  `DUHO_TRACEBACK` set the error is now raised instead of logged.
 - **Python API**, renamed with no aliases kept:
 
   | 0.4 | 0.5 |
@@ -136,11 +151,11 @@ Strings are quoted. `max_age` and `max_entries`, shown in the 0.4 example's
   not owned by the user running authkeys or that group or others can write, and
   logs one WARNING naming the path. Make the cache directory owned by, and
   writable only by, the account that runs authkeys.
-- **A user's `~/.ssh/authkeys.conf` no longer expands `${env:NAME}`.** It is
+- **A user's `~/.ssh/authkeys.cfg` does not expand `${env.NAME}`.** It is
   written by the user it delegates for, so it could read the resolver's
   environment (under `serve`, the API key) into a username that was logged and
-  sent to every source. `${env:NAME}` still works in the system configuration.
-- `~/.ssh/authorized_keys*` (file source) and `~/.ssh/authkeys.conf` are read
+  sent to every source. `${env.NAME}` still works in `/etc/authkeys.cfg`.
+- `~/.ssh/authorized_keys*` (file source) and `~/.ssh/authkeys.cfg` are read
   under sshd's StrictModes rules on POSIX: the file must be a regular file, not a
   symbolic link, of at most 1 MiB, and it and every directory up to the home
   must be owned by the user or root and not writable by group or others. A file
@@ -156,13 +171,15 @@ Strings are quoted. `max_age` and `max_entries`, shown in the 0.4 example's
   an expired password, missing rights); the source now checks the result code,
   so a refusal goes through the error path and `expired_on_error` instead of
   being cached over the user's last good keys as an empty result.
-- **The ldap source refuses an `ldap://` server URL.** ldap3 lets the URL's
-  scheme override `use_ssl`, so `ldap://` silently sent the search in clear text
-  and ignored `tls_verify`. Use `ldaps://` or a bare host name.
+- **The ldap source no longer searches in clear text.** ldap3 let the URL's
+  scheme override `use_ssl`, so `ldap://` silently sent the search unencrypted
+  and ignored `tls_verify`. `ldap://` is now accepted only with `auth = "gssapi"`
+  (a sealed session) or `starttls = true`; otherwise use `ldaps://` or a bare
+  host name.
 - **The ldap source applies a certificate filter by default.** Before, no filter
   ran unless `cert_filter` was set, and every certificate in the attribute
   became a key, encryption and recovery certificates included. The default is
-  now `authkeys.sources.ldap.only_auth_keys`, which keeps a certificate only when
+  now `authkeys.sources.only_auth_keys`, which keeps a certificate only when
   it is within its validity period, is not self-signed, its KeyUsage (if any)
   allows digital signature and its ExtendedKeyUsage (if any) includes clientAuth
   or anyExtendedKeyUsage. `cert_filter = none` keeps every certificate.
@@ -178,14 +195,13 @@ Strings are quoted. `max_age` and `max_entries`, shown in the 0.4 example's
   the list raised `KeyError` for every unknown user. A search matching more than
   one entry is now an error rather than the first entry's keys.
 - No "No config file found" WARNING is logged for a user without
-  `~/.ssh/authkeys.conf`; that file is optional. The warning remains for the
-  configuration named by `--config` or the system paths.
+  `~/.ssh/authkeys.cfg`; that file is optional.
 - A delegation that stops existing stops working: when a user's
-  `~/.ssh/authkeys.conf` is removed or no longer parses, a long-running `serve`
+  `~/.ssh/authkeys.cfg` is removed or no longer parses, a long-running `serve`
   no longer keeps the users and groups it granted before.
 - A broken delegation file is logged by error type and line number; the file's
   text is no longer copied into the log.
-- `%` in a configuration value (an API key, a password, an `${env:...}`
+- `%` in a configuration value (an API key, a password, an `${env.NAME}`
   expansion) is read as written. Before, it raised `InterpolationSyntaxError`:
   `serve` exited 1 with a traceback and `resolve` exited 3.
 - A key line whose type is not an OpenSSH key type (`ssh-*`, `ecdsa-*`, `sk-*`,
@@ -209,23 +225,6 @@ Strings are quoted. `max_age` and `max_entries`, shown in the 0.4 example's
   belongs to someone else.
 - The shipped API header documents `completion` with its positional shell
   argument, and when `resolve` is inserted before a `--`.
-
-### Changed
-- **The `duho` requirement moves to its 0.7.x series: `>=0.7.4,<0.8.0`** (was
-  `>=0.6.0,<0.7.0`). The floor is 0.7.4 because the entry now uses
-  `duho.run(..., exit=False)` and the root's `_report_error_`, both added in
-  that patch.
-- The `authkeys` entry (`authkeys.cli.run`, the console script) goes through
-  `duho.run(..., exit=False)` and always returns an `int`. Exit statuses and
-  output are unchanged, with three differences: Ctrl-C outside `resolve`,
-  `check` and `serve` (which handle it themselves) ends with status 130 and no
-  traceback; a broken pipe there ends with status 1, quietly; and `serve`'s
-  refusal to start without a usable `api_key` is returned as status 1 with the
-  same message on stderr instead of raised as `SystemExit`.
-- `authkeys cache` reports "No cache configured", an unsupported backend action
-  and an unknown action as `CommandError`s (statuses 3, 3 and 2). The log record
-  is the same: logger `authkeys`, level `ERROR`, the same message. With
-  `DUHO_TRACEBACK` set the error is now raised instead of logged.
 
 ## [0.4.5] - 2026-10-03
 
