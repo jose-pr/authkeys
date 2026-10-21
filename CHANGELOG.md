@@ -45,8 +45,9 @@ API. A configuration written for 0.4 does not load: convert it as below.
   one-line usage error (status 2) instead of a traceback.
 - `authkeys.server.KeyServer(authkeys, listen, *, ..., ssl_context=None)` binds
   one socket through netimps (was `bind=`/`port=`); `bind_servers()` builds one
-  per listen entry and `serve()` takes one server or a list. netimps and
-  sslcontext are new dependencies.
+  per listen entry and `serve()` takes one server or a list. netimps
+  (`>=0.4.1`, the first with `parse_listen`) and sslcontext are new
+  dependencies.
 - **The http and github sources use syshttp instead of requests** (the `http`
   extra now installs syshttp). The OS trust store verifies servers (truststore
   on Python 3.10+, instead of certifi); the system's proxy configuration (proxy
